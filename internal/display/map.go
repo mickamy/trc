@@ -35,8 +35,8 @@ func PrintMap(
 
 	edges := make(map[edgeKey]*edgeStats)
 	for _, r := range records {
-		src := resolveName(svcMap, r.SrcIP)
-		dst := resolveName(svcMap, r.DstIP)
+		src := ResolveName(svcMap, r.SrcIP)
+		dst := ResolveName(svcMap, r.DstIP)
 		key := edgeKey{src: src, dst: dst, proto: r.Proto}
 		s, ok := edges[key]
 		if !ok {

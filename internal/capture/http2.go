@@ -25,6 +25,7 @@ const (
 // streamState tracks a single HTTP/2 stream's request/response progress.
 type streamState struct {
 	startTime   time.Time
+	endTime     time.Time
 	method      string
 	path        string
 	status      int
@@ -60,23 +61,24 @@ func newHTTP2Parser(srcIP, dstIP string, emit func(model.Record)) *http2Parser {
 
 // runBothDirections reads HTTP/2 frames from separate client and server
 // readers concurrently. Used by tests that provide split input.
-func (p *http2Parser) runBothDirections(client, server io.Reader) {
+func (p *http2Parser) runBothDirections(client, server io.Reader, now func() time.Time) {
 	var wg sync.WaitGroup
 	wg.Add(2) //nolint:mnd // two directions
 	go func() {
 		defer wg.Done()
-		p.runDirection(client, dirClient)
+		p.runDirection(client, dirClient, now)
 	}()
 	go func() {
 		defer wg.Done()
-		p.runDirection(server, dirServer)
+		p.runDirection(server, dirServer, now)
 	}()
 	wg.Wait()
 }
 
 // runDirection reads HTTP/2 frames from r for the given direction until
 // EOF or error. Each direction maintains its own HPACK decoder.
-func (p *http2Parser) runDirection(r io.Reader, dir direction) {
+// The now function returns the packet capture timestamp for accurate timing.
+func (p *http2Parser) runDirection(r io.Reader, dir direction, now func() time.Time) {
 	framer := http2.NewFramer(io.Discard, r)
 	framer.ReadMetaHeaders = nil // we decode HPACK ourselves
 	// Allow large frames in captures without erroring.
@@ -118,30 +120,30 @@ func (p *http2Parser) runDirection(r io.Reader, dir direction) {
 		if err != nil {
 			return
 		}
-		p.processFrame(f, dir, decoder, &activeStreamID)
+		p.processFrame(f, dir, decoder, &activeStreamID, now)
 	}
 }
 
 func (p *http2Parser) processFrame(
-	f http2.Frame, dir direction, decoder *hpack.Decoder, activeStreamID *uint32,
+	f http2.Frame, dir direction, decoder *hpack.Decoder, activeStreamID *uint32, now func() time.Time,
 ) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	switch frame := f.(type) {
 	case *http2.HeadersFrame:
-		p.handleHeaders(frame, dir, decoder, activeStreamID)
+		p.handleHeaders(frame, dir, decoder, activeStreamID, now)
 	case *http2.ContinuationFrame:
 		p.handleContinuation(frame, decoder, activeStreamID)
 	case *http2.DataFrame:
-		p.handleData(frame, dir)
+		p.handleData(frame, dir, now)
 	default:
 		// SETTINGS, WINDOW_UPDATE, PING, etc. — skip
 	}
 }
 
 func (p *http2Parser) handleHeaders(
-	f *http2.HeadersFrame, dir direction, decoder *hpack.Decoder, activeStreamID *uint32,
+	f *http2.HeadersFrame, dir direction, decoder *hpack.Decoder, activeStreamID *uint32, now func() time.Time,
 ) {
 	id := f.StreamID
 	s, ok := p.streams[id]
@@ -151,7 +153,7 @@ func (p *http2Parser) handleHeaders(
 	}
 	// Only record the start time from the client (request) direction.
 	if dir == dirClient && s.startTime.IsZero() {
-		s.startTime = time.Now()
+		s.startTime = now()
 	}
 
 	s.headerBuf = append(s.headerBuf, f.HeaderBlockFragment()...)
@@ -161,7 +163,7 @@ func (p *http2Parser) handleHeaders(
 	}
 
 	if f.StreamEnded() {
-		p.markEndStream(id, dir)
+		p.markEndStream(id, dir, now)
 	}
 }
 
@@ -181,9 +183,9 @@ func (p *http2Parser) handleContinuation(
 	}
 }
 
-func (p *http2Parser) handleData(f *http2.DataFrame, dir direction) {
+func (p *http2Parser) handleData(f *http2.DataFrame, dir direction, now func() time.Time) {
 	if f.StreamEnded() {
-		p.markEndStream(f.StreamID, dir)
+		p.markEndStream(f.StreamID, dir, now)
 	}
 }
 
@@ -211,7 +213,7 @@ func (p *http2Parser) decodeHeaders(
 
 // markEndStream records that the given direction has sent END_STREAM and
 // attempts to emit a record if the stream is complete.
-func (p *http2Parser) markEndStream(id uint32, dir direction) {
+func (p *http2Parser) markEndStream(id uint32, dir direction, now func() time.Time) {
 	s, ok := p.streams[id]
 	if !ok {
 		return
@@ -221,6 +223,7 @@ func (p *http2Parser) markEndStream(id uint32, dir direction) {
 		s.clientEnded = true
 	} else {
 		s.serverEnded = true
+		s.endTime = now()
 	}
 
 	p.tryEmit(id)
@@ -259,7 +262,7 @@ func (p *http2Parser) tryEmit(id uint32) {
 		grpcStatus = grpcStatusName(s.grpcStatus)
 	}
 
-	duration := time.Since(s.startTime)
+	duration := s.endTime.Sub(s.startTime)
 
 	p.emit(model.Record{
 		Timestamp:  s.startTime,
