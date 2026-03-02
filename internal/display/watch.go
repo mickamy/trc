@@ -28,10 +28,17 @@ func StreamWatch(
 ) error {
 	// When ctx is cancelled, close the reader (if possible) so that
 	// scanner.Scan() unblocks instead of hanging on an idle stream.
+	// The done channel prevents the goroutine from leaking when the
+	// reader reaches EOF before ctx is cancelled.
+	done := make(chan struct{})
+	defer close(done)
 	if rc, ok := r.(io.Closer); ok {
 		go func() {
-			<-ctx.Done()
-			_ = rc.Close()
+			select {
+			case <-ctx.Done():
+				_ = rc.Close()
+			case <-done:
+			}
 		}()
 	}
 
@@ -63,7 +70,7 @@ func StreamWatch(
 		// If the context was cancelled the reader was closed, causing a
 		// read error that we can safely ignore.
 		if ctx.Err() != nil {
-			return nil //nolint:nilerr // intentional: ctx cancel closed the reader
+			return nil
 		}
 		return fmt.Errorf("reading records: %w", err)
 	}
