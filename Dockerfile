@@ -8,7 +8,8 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=1 go build -o /trcd ./cmd/trcd/
+ARG VERSION=dev
+RUN CGO_ENABLED=1 go build -ldflags "-X main.version=${VERSION}" -o /trcd ./cmd/trcd/
 
 FROM debian:bookworm-slim
 

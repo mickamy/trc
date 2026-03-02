@@ -14,7 +14,7 @@ build-trc:
 
 build-trcd:
 	@echo "Building trcd..."
-	go build -o $(BUILD_DIR)/trcd ./cmd/trcd/
+	go build $(LDFLAGS) -o $(BUILD_DIR)/trcd ./cmd/trcd/
 
 install:
 	@echo "Installing trc and trcd..."
@@ -25,7 +25,7 @@ install:
 	mkdir -p "$$bin_dir"; \
 	echo "Installing to $$bin_dir"; \
 	go build $(LDFLAGS) -o "$$bin_dir/trc" . && \
-	go build -o "$$bin_dir/trcd" ./cmd/trcd/
+	go build $(LDFLAGS) -o "$$bin_dir/trcd" ./cmd/trcd/
 
 uninstall:
 	@echo "Uninstalling trc and trcd..."
