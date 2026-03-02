@@ -56,15 +56,19 @@ func ExtractTraceID(h http.Header) string {
 	return extractTraceID(h)
 }
 
-// ParseHTTP2 runs the http2Parser on raw input and returns collected records.
-func ParseHTTP2(t *testing.T, r io.Reader, srcIP, dstIP string) []model.Record {
+// ParseHTTP2 runs the http2Parser on split client/server input and returns
+// collected records.
+func ParseHTTP2(t *testing.T, client, server io.Reader, srcIP, dstIP string) []model.Record {
 	t.Helper()
 
+	var mu sync.Mutex
 	var records []model.Record
 	p := newHTTP2Parser(srcIP, dstIP, func(rec model.Record) {
+		mu.Lock()
 		records = append(records, rec)
+		mu.Unlock()
 	})
-	p.run(r)
+	p.runBothDirections(client, server)
 	return records
 }
 

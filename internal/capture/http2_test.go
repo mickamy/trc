@@ -110,8 +110,9 @@ func TestIsGRPC(t *testing.T) {
 func TestHTTP2Parser_SimpleExchange(t *testing.T) {
 	t.Parallel()
 
-	var buf bytes.Buffer
-	framer := http2.NewFramer(&buf, nil)
+	var clientBuf, serverBuf bytes.Buffer
+	clientFramer := http2.NewFramer(&clientBuf, nil)
+	serverFramer := http2.NewFramer(&serverBuf, nil)
 
 	// Encode request HEADERS: :method=GET, :path=/users/42
 	reqHeaders := encodeHeaders(t,
@@ -120,15 +121,15 @@ func TestHTTP2Parser_SimpleExchange(t *testing.T) {
 		hpack.HeaderField{Name: ":scheme", Value: "http"},
 		hpack.HeaderField{Name: "x-request-id", Value: "trace-h2"},
 	)
-	writeRawHeaders(t, framer, 1, reqHeaders, true)
+	writeRawHeaders(t, clientFramer, 1, reqHeaders, true)
 
 	// Encode response HEADERS: :status=200
 	respHeaders := encodeHeaders(t,
 		hpack.HeaderField{Name: ":status", Value: "200"},
 	)
-	writeRawHeaders(t, framer, 1, respHeaders, true)
+	writeRawHeaders(t, serverFramer, 1, respHeaders, true)
 
-	records := capture.ParseHTTP2(t, &buf, "10.0.0.1", "10.0.0.2")
+	records := capture.ParseHTTP2(t, &clientBuf, &serverBuf, "10.0.0.1", "10.0.0.2")
 
 	if len(records) != 1 {
 		t.Fatalf("got %d records, want 1", len(records))
@@ -155,8 +156,9 @@ func TestHTTP2Parser_SimpleExchange(t *testing.T) {
 func TestHTTP2Parser_GRPCDetection(t *testing.T) {
 	t.Parallel()
 
-	var buf bytes.Buffer
-	framer := http2.NewFramer(&buf, nil)
+	var clientBuf, serverBuf bytes.Buffer
+	clientFramer := http2.NewFramer(&clientBuf, nil)
+	serverFramer := http2.NewFramer(&serverBuf, nil)
 
 	// gRPC request
 	reqHeaders := encodeHeaders(t,
@@ -165,10 +167,10 @@ func TestHTTP2Parser_GRPCDetection(t *testing.T) {
 		hpack.HeaderField{Name: ":scheme", Value: "http"},
 		hpack.HeaderField{Name: "content-type", Value: "application/grpc"},
 	)
-	writeRawHeaders(t, framer, 3, reqHeaders, false)
+	writeRawHeaders(t, clientFramer, 3, reqHeaders, false)
 
 	// Empty DATA with END_STREAM
-	if err := framer.WriteData(3, true, nil); err != nil {
+	if err := clientFramer.WriteData(3, true, nil); err != nil {
 		t.Fatalf("WriteData() error = %v", err)
 	}
 
@@ -178,9 +180,9 @@ func TestHTTP2Parser_GRPCDetection(t *testing.T) {
 		hpack.HeaderField{Name: "content-type", Value: "application/grpc"},
 		hpack.HeaderField{Name: "grpc-status", Value: "0"},
 	)
-	writeRawHeaders(t, framer, 3, respHeaders, true)
+	writeRawHeaders(t, serverFramer, 3, respHeaders, true)
 
-	records := capture.ParseHTTP2(t, &buf, "10.0.0.1", "10.0.0.2")
+	records := capture.ParseHTTP2(t, &clientBuf, &serverBuf, "10.0.0.1", "10.0.0.2")
 
 	if len(records) != 1 {
 		t.Fatalf("got %d records, want 1", len(records))

@@ -58,10 +58,20 @@ func newHTTP2Parser(srcIP, dstIP string, emit func(model.Record)) *http2Parser {
 	}
 }
 
-// run reads HTTP/2 frames from r (single direction). Backward compatible
-// entry point used by tests.
-func (p *http2Parser) run(r io.Reader) {
-	p.runDirection(r, dirClient)
+// runBothDirections reads HTTP/2 frames from separate client and server
+// readers concurrently. Used by tests that provide split input.
+func (p *http2Parser) runBothDirections(client, server io.Reader) {
+	var wg sync.WaitGroup
+	wg.Add(2) //nolint:mnd // two directions
+	go func() {
+		defer wg.Done()
+		p.runDirection(client, dirClient)
+	}()
+	go func() {
+		defer wg.Done()
+		p.runDirection(server, dirServer)
+	}()
+	wg.Wait()
 }
 
 // runDirection reads HTTP/2 frames from r for the given direction until
@@ -124,7 +134,7 @@ func (p *http2Parser) processFrame(
 	case *http2.ContinuationFrame:
 		p.handleContinuation(frame, decoder, activeStreamID)
 	case *http2.DataFrame:
-		p.handleData(frame)
+		p.handleData(frame, dir)
 	default:
 		// SETTINGS, WINDOW_UPDATE, PING, etc. — skip
 	}
@@ -151,7 +161,7 @@ func (p *http2Parser) handleHeaders(
 	}
 
 	if f.StreamEnded() {
-		p.finishStream(id)
+		p.markEndStream(id, dir)
 	}
 }
 
@@ -171,9 +181,9 @@ func (p *http2Parser) handleContinuation(
 	}
 }
 
-func (p *http2Parser) handleData(f *http2.DataFrame) {
+func (p *http2Parser) handleData(f *http2.DataFrame, dir direction) {
 	if f.StreamEnded() {
-		p.finishStream(f.StreamID)
+		p.markEndStream(f.StreamID, dir)
 	}
 }
 
@@ -193,23 +203,48 @@ func (p *http2Parser) decodeHeaders(
 	}
 	s.headerBuf = nil
 
-	// If END_STREAM was already received and both sides are now complete, emit.
-	if s.endStreamSeen {
-		p.finishStream(id)
+	// If server END_STREAM was already received and both sides are now complete, emit.
+	if s.serverEnded {
+		p.tryEmit(id)
 	}
 }
 
-func (p *http2Parser) finishStream(id uint32) {
+// markEndStream records that the given direction has sent END_STREAM and
+// attempts to emit a record if the stream is complete.
+func (p *http2Parser) markEndStream(id uint32, dir direction) {
 	s, ok := p.streams[id]
 	if !ok {
 		return
 	}
 
-	s.endStreamSeen = true
+	if dir == dirClient {
+		s.clientEnded = true
+	} else {
+		s.serverEnded = true
+	}
+
+	p.tryEmit(id)
+}
+
+// tryEmit emits a record if the server response has ended and both method
+// and status are known. Incomplete streams are kept for later completion.
+func (p *http2Parser) tryEmit(id uint32) {
+	s, ok := p.streams[id]
+	if !ok {
+		return
+	}
+
+	// Wait for the server to finish so we capture trailers (e.g. grpc-status).
+	if !s.serverEnded {
+		return
+	}
 
 	// We need both method (request) and status (response) to emit a record.
-	// If incomplete, keep the entry until the other side arrives.
 	if s.method == "" || s.status == 0 {
+		// Both directions ended but data is still incomplete — discard.
+		if s.clientEnded && s.serverEnded {
+			delete(p.streams, id)
+		}
 		return
 	}
 	delete(p.streams, id)
