@@ -19,10 +19,22 @@ type ServiceResolver func() docker.ServiceMap
 // StreamWatch reads NDJSON records from r and writes formatted output to w.
 // It resolves IPs to service names using resolve and optionally filters by
 // service name. It blocks until ctx is cancelled or r is exhausted.
+//
+// If r implements io.Closer it will be closed when ctx is cancelled so that
+// a blocking read is interrupted promptly.
 func StreamWatch(
 	ctx context.Context, r io.Reader,
 	resolve ServiceResolver, filter string, w io.Writer,
 ) error {
+	// When ctx is cancelled, close the reader (if possible) so that
+	// scanner.Scan() unblocks instead of hanging on an idle stream.
+	if rc, ok := r.(io.Closer); ok {
+		go func() {
+			<-ctx.Done()
+			_ = rc.Close()
+		}()
+	}
+
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) //nolint:mnd // 10 MiB max token size
 	for scanner.Scan() {
@@ -46,6 +58,11 @@ func StreamWatch(
 		}
 
 		fmt.Fprintln(w, formatRecord(rec))
+	}
+	// If the context was cancelled the reader was closed, causing a read
+	// error that we can safely ignore.
+	if ctx.Err() != nil {
+		return nil
 	}
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("reading records: %w", err)
