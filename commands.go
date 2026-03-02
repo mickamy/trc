@@ -107,7 +107,11 @@ func refreshServices(
 func snapMap(mu *sync.RWMutex, svcMap *docker.ServiceMap) docker.ServiceMap {
 	mu.RLock()
 	defer mu.RUnlock()
-	return *svcMap
+	copied := make(docker.ServiceMap, len(*svcMap))
+	for k, v := range *svcMap {
+		copied[k] = v
+	}
+	return copied
 }
 
 func handleTree(ctx context.Context, flags globalFlags, args []string) error {
