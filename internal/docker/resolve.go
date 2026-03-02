@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -33,15 +34,64 @@ func ResolveServices(ctx context.Context, runner exec.Runner, network string) (S
 		return nil, fmt.Errorf("parsing network containers: %w", err)
 	}
 
+	// Try to resolve compose service labels in a single docker inspect call.
+	// Falls back to the name-based heuristic for non-compose containers.
+	labels := resolveComposeLabels(ctx, runner, containers)
+
 	svcMap := make(ServiceMap, len(containers))
-	for _, c := range containers {
+	for id, c := range containers {
 		ip := stripCIDR(c.IPv4Address)
 		if ip == "" {
 			continue
 		}
-		svcMap[ip] = cleanServiceName(c.Name)
+		if label, ok := labels[id]; ok {
+			svcMap[ip] = label
+		} else {
+			svcMap[ip] = cleanServiceName(c.Name)
+		}
 	}
 	return svcMap, nil
+}
+
+// resolveComposeLabels runs a single docker inspect on all container IDs and
+// returns a map from container ID to the com.docker.compose.service label.
+// Returns nil on any error (caller falls back to name heuristic).
+func resolveComposeLabels(
+	ctx context.Context, runner exec.Runner, containers map[string]containerInfo,
+) map[string]string {
+	if len(containers) == 0 {
+		return nil
+	}
+
+	ids := make([]string, 0, len(containers))
+	for id := range containers {
+		ids = append(ids, id)
+	}
+
+	args := make([]string, 0, len(ids)+3)
+	args = append(args,
+		"inspect",
+		"--format", `{{.Id}}{{"\t"}}{{index .Config.Labels "com.docker.compose.service"}}`,
+	)
+	args = append(args, ids...)
+
+	out, err := runner.RuntimeOutput(ctx, args...)
+	if err != nil {
+		return nil
+	}
+
+	labels := make(map[string]string, len(containers))
+	for line := range bytes.SplitSeq(out, []byte("\n")) {
+		if len(line) == 0 {
+			continue
+		}
+		id, label, ok := strings.Cut(string(line), "\t")
+		if !ok || label == "" || label == "<no value>" {
+			continue
+		}
+		labels[id] = label
+	}
+	return labels
 }
 
 // stripCIDR removes the "/prefix" suffix from a CIDR notation address.
