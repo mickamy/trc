@@ -41,12 +41,14 @@ func defaults() Config {
 func Load(projectDir, globalPath string) (Config, error) {
 	cfg := defaults()
 
-	global, err := loadFile(globalPath)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return cfg, err
-	}
-	if err == nil {
-		merge(&cfg, global)
+	if globalPath != "" {
+		global, err := loadFile(globalPath)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return cfg, err
+		}
+		if err == nil {
+			merge(&cfg, global)
+		}
 	}
 
 	local, err := loadFile(filepath.Join(projectDir, ".trc.yaml"))
