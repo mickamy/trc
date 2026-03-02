@@ -33,6 +33,8 @@ type streamState struct {
 	traceID     string
 	// headerBuf accumulates HEADERS/CONTINUATION fragments until END_HEADERS.
 	headerBuf []byte
+	// endStreamSeen is true once an END_STREAM flag has been observed.
+	endStreamSeen bool
 }
 
 // http2Parser reads HTTP/2 frames from both directions of a connection
@@ -185,6 +187,11 @@ func (p *http2Parser) decodeHeaders(
 		return
 	}
 	s.headerBuf = nil
+
+	// If END_STREAM was already received and both sides are now complete, emit.
+	if s.endStreamSeen {
+		p.finishStream(id)
+	}
 }
 
 func (p *http2Parser) finishStream(id uint32) {
@@ -193,7 +200,10 @@ func (p *http2Parser) finishStream(id uint32) {
 		return
 	}
 
+	s.endStreamSeen = true
+
 	// We need both method (request) and status (response) to emit a record.
+	// If incomplete, keep the entry until the other side arrives.
 	if s.method == "" || s.status == 0 {
 		return
 	}
