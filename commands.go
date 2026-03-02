@@ -60,7 +60,8 @@ func handleWatch(ctx context.Context, flags globalFlags, _ []string) error {
 		r = io.TeeReader(stdout, f)
 	}
 
-	if err := display.StreamWatch(ctx, r, snapMap(&mu, &svcMap), flags.filter, os.Stdout); err != nil {
+	resolve := func() docker.ServiceMap { return snapMap(&mu, &svcMap) }
+	if err := display.StreamWatch(ctx, r, resolve, flags.filter, os.Stdout); err != nil {
 		return fmt.Errorf("streaming watch: %w", err)
 	}
 	return nil

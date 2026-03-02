@@ -12,12 +12,16 @@ import (
 	"github.com/mickamy/trc/internal/model"
 )
 
+// ServiceResolver returns the current service map snapshot.
+// It is called for each record so that updates are reflected in real time.
+type ServiceResolver func() docker.ServiceMap
+
 // StreamWatch reads NDJSON records from r and writes formatted output to w.
-// It resolves IPs to service names using svcMap and optionally filters by
+// It resolves IPs to service names using resolve and optionally filters by
 // service name. It blocks until ctx is cancelled or r is exhausted.
 func StreamWatch(
 	ctx context.Context, r io.Reader,
-	svcMap docker.ServiceMap, filter string, w io.Writer,
+	resolve ServiceResolver, filter string, w io.Writer,
 ) error {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
@@ -32,6 +36,7 @@ func StreamWatch(
 			continue
 		}
 
+		svcMap := resolve()
 		rec.SrcName = resolveName(svcMap, rec.SrcIP)
 		rec.DstName = resolveName(svcMap, rec.DstIP)
 

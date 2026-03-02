@@ -49,7 +49,7 @@ func TestStreamWatch_BasicOutput(t *testing.T) {
 	var out bytes.Buffer
 	err := display.StreamWatch(
 		t.Context(), strings.NewReader(toNDJSON(t, records)),
-		svcMap, "", &out,
+		func() docker.ServiceMap { return svcMap }, "", &out,
 	)
 	if err != nil {
 		t.Fatalf("StreamWatch() error = %v", err)
@@ -100,7 +100,7 @@ func TestStreamWatch_Filter(t *testing.T) {
 	var out bytes.Buffer
 	err := display.StreamWatch(
 		t.Context(), strings.NewReader(toNDJSON(t, records)),
-		svcMap, "users", &out,
+		func() docker.ServiceMap { return svcMap }, "users", &out,
 	)
 	if err != nil {
 		t.Fatalf("StreamWatch() error = %v", err)
@@ -127,7 +127,7 @@ func TestStreamWatch_UnknownIP(t *testing.T) {
 	var out bytes.Buffer
 	err := display.StreamWatch(
 		t.Context(), strings.NewReader(toNDJSON(t, records)),
-		docker.ServiceMap{}, "", &out,
+		func() docker.ServiceMap { return docker.ServiceMap{} }, "", &out,
 	)
 	if err != nil {
 		t.Fatalf("StreamWatch() error = %v", err)
@@ -150,7 +150,7 @@ func TestStreamWatch_InvalidJSON(t *testing.T) {
 	var out bytes.Buffer
 	err := display.StreamWatch(
 		t.Context(), strings.NewReader(input),
-		docker.ServiceMap{}, "", &out,
+		func() docker.ServiceMap { return docker.ServiceMap{} }, "", &out,
 	)
 	if err != nil {
 		t.Fatalf("StreamWatch() error = %v", err)
