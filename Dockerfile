@@ -1,10 +1,14 @@
 FROM golang:1.26-bookworm AS build
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpcap-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -o /trcd ./cmd/trcd/
+RUN CGO_ENABLED=1 go build -o /trcd ./cmd/trcd/
 
 FROM debian:bookworm-slim
 
