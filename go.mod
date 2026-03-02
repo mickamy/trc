@@ -3,8 +3,12 @@ module github.com/mickamy/trc
 go 1.25.0
 
 require (
+	github.com/google/gopacket v1.1.19
 	golang.org/x/net v0.51.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
-require golang.org/x/text v0.34.0 // indirect
+require (
+	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/text v0.34.0 // indirect
+)
