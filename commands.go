@@ -50,11 +50,9 @@ func handleWatch(ctx context.Context, flags globalFlags, _ []string) error {
 	// Periodically refresh the service map in the background.
 	var mu sync.RWMutex
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		refreshServices(ctx, e.runner, network, &mu, &svcMap)
-	}()
+	})
 
 	// Optionally tee raw NDJSON to a file for later analysis.
 	var r io.Reader = stdout
