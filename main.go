@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"time"
 )
 
 var version = "dev"
@@ -27,6 +28,8 @@ func run() int {
 	fs.StringVar(&flags.network, "network", "", "")
 	fs.StringVar(&flags.network, "n", "", "")
 	fs.StringVar(&flags.filter, "filter", "", "")
+	fs.DurationVar(&flags.duration, "duration", 30*time.Second, "") //nolint:mnd // default capture window
+	fs.DurationVar(&flags.duration, "d", 30*time.Second, "")        //nolint:mnd // short alias
 	fs.BoolVar(&showVersion, "version", false, "")
 	fs.BoolVar(&showVersion, "v", false, "")
 
@@ -85,6 +88,7 @@ Commands:
 Flags:
   -n, --network    Docker network to capture (auto-detected if omitted)
   --filter         Filter output by service name
+  -d, --duration   Capture duration for tree/map (default 30s)
   --version, -v    Print version
   -h, --help       Show this help
 `)
