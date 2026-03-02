@@ -1,0 +1,335 @@
+package capture
+
+import (
+	"fmt"
+	"io"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/hpack"
+
+	"github.com/mickamy/trc/internal/model"
+)
+
+// direction indicates which side of a TCP connection a stream belongs to.
+type direction int
+
+const (
+	dirClient direction = iota
+	dirServer
+)
+
+// streamState tracks a single HTTP/2 stream's request/response progress.
+type streamState struct {
+	startTime   time.Time
+	method      string
+	path        string
+	status      int
+	contentType string
+	grpcStatus  string
+	traceID     string
+	// headerBuf accumulates HEADERS/CONTINUATION fragments until END_HEADERS.
+	headerBuf []byte
+	// clientEnded / serverEnded track END_STREAM per direction.
+	clientEnded bool
+	serverEnded bool
+}
+
+// http2Parser reads HTTP/2 frames from both directions of a connection
+// and emits Records. It is safe for concurrent use from two goroutines
+// (one per direction).
+type http2Parser struct {
+	srcIP   string
+	dstIP   string
+	emit    func(model.Record)
+	mu      sync.Mutex
+	streams map[uint32]*streamState
+}
+
+func newHTTP2Parser(srcIP, dstIP string, emit func(model.Record)) *http2Parser {
+	return &http2Parser{
+		srcIP:   srcIP,
+		dstIP:   dstIP,
+		emit:    emit,
+		streams: make(map[uint32]*streamState),
+	}
+}
+
+// runBothDirections reads HTTP/2 frames from separate client and server
+// readers concurrently. Used by tests that provide split input.
+func (p *http2Parser) runBothDirections(client, server io.Reader) {
+	var wg sync.WaitGroup
+	wg.Add(2) //nolint:mnd // two directions
+	go func() {
+		defer wg.Done()
+		p.runDirection(client, dirClient)
+	}()
+	go func() {
+		defer wg.Done()
+		p.runDirection(server, dirServer)
+	}()
+	wg.Wait()
+}
+
+// runDirection reads HTTP/2 frames from r for the given direction until
+// EOF or error. Each direction maintains its own HPACK decoder.
+func (p *http2Parser) runDirection(r io.Reader, dir direction) {
+	framer := http2.NewFramer(io.Discard, r)
+	framer.ReadMetaHeaders = nil // we decode HPACK ourselves
+	// Allow large frames in captures without erroring.
+	framer.SetMaxReadFrameSize(1 << 24) //nolint:mnd // 16 MiB max frame
+
+	var activeStreamID uint32
+	decoder := hpack.NewDecoder(4096, func(f hpack.HeaderField) { //nolint:mnd // HPACK default table size
+		// Called during decoder.Write inside processFrame, mutex already held.
+		s, ok := p.streams[activeStreamID]
+		if !ok {
+			return
+		}
+		switch f.Name {
+		case ":method":
+			s.method = f.Value
+		case ":path":
+			s.path = f.Value
+		case ":status":
+			s.status, _ = strconv.Atoi(f.Value)
+		case "content-type":
+			s.contentType = f.Value
+		case "grpc-status":
+			s.grpcStatus = f.Value
+		case "traceparent":
+			s.traceID = parseTraceparent(f.Value)
+		case "x-trace-id":
+			if s.traceID == "" {
+				s.traceID = f.Value
+			}
+		case "x-request-id":
+			if s.traceID == "" {
+				s.traceID = f.Value
+			}
+		}
+	})
+
+	for {
+		f, err := framer.ReadFrame()
+		if err != nil {
+			return
+		}
+		p.processFrame(f, dir, decoder, &activeStreamID)
+	}
+}
+
+func (p *http2Parser) processFrame(
+	f http2.Frame, dir direction, decoder *hpack.Decoder, activeStreamID *uint32,
+) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	switch frame := f.(type) {
+	case *http2.HeadersFrame:
+		p.handleHeaders(frame, dir, decoder, activeStreamID)
+	case *http2.ContinuationFrame:
+		p.handleContinuation(frame, decoder, activeStreamID)
+	case *http2.DataFrame:
+		p.handleData(frame, dir)
+	default:
+		// SETTINGS, WINDOW_UPDATE, PING, etc. — skip
+	}
+}
+
+func (p *http2Parser) handleHeaders(
+	f *http2.HeadersFrame, dir direction, decoder *hpack.Decoder, activeStreamID *uint32,
+) {
+	id := f.StreamID
+	s, ok := p.streams[id]
+	if !ok {
+		s = &streamState{}
+		p.streams[id] = s
+	}
+	// Only record the start time from the client (request) direction.
+	if dir == dirClient && s.startTime.IsZero() {
+		s.startTime = time.Now()
+	}
+
+	s.headerBuf = append(s.headerBuf, f.HeaderBlockFragment()...)
+
+	if f.HeadersEnded() {
+		p.decodeHeaders(id, decoder, activeStreamID)
+	}
+
+	if f.StreamEnded() {
+		p.markEndStream(id, dir)
+	}
+}
+
+func (p *http2Parser) handleContinuation(
+	f *http2.ContinuationFrame, decoder *hpack.Decoder, activeStreamID *uint32,
+) {
+	id := f.StreamID
+	s, ok := p.streams[id]
+	if !ok {
+		return
+	}
+
+	s.headerBuf = append(s.headerBuf, f.HeaderBlockFragment()...)
+
+	if f.HeadersEnded() {
+		p.decodeHeaders(id, decoder, activeStreamID)
+	}
+}
+
+func (p *http2Parser) handleData(f *http2.DataFrame, dir direction) {
+	if f.StreamEnded() {
+		p.markEndStream(f.StreamID, dir)
+	}
+}
+
+func (p *http2Parser) decodeHeaders(
+	id uint32, decoder *hpack.Decoder, activeStreamID *uint32,
+) {
+	s, ok := p.streams[id]
+	if !ok {
+		return
+	}
+
+	*activeStreamID = id
+	if _, err := decoder.Write(s.headerBuf); err != nil {
+		// Malformed headers — skip this stream.
+		delete(p.streams, id)
+		return
+	}
+	s.headerBuf = nil
+
+	// If server END_STREAM was already received and both sides are now complete, emit.
+	if s.serverEnded {
+		p.tryEmit(id)
+	}
+}
+
+// markEndStream records that the given direction has sent END_STREAM and
+// attempts to emit a record if the stream is complete.
+func (p *http2Parser) markEndStream(id uint32, dir direction) {
+	s, ok := p.streams[id]
+	if !ok {
+		return
+	}
+
+	if dir == dirClient {
+		s.clientEnded = true
+	} else {
+		s.serverEnded = true
+	}
+
+	p.tryEmit(id)
+}
+
+// tryEmit emits a record if the server response has ended and both method
+// and status are known. Incomplete streams are kept for later completion.
+func (p *http2Parser) tryEmit(id uint32) {
+	s, ok := p.streams[id]
+	if !ok {
+		return
+	}
+
+	// Wait for the server to finish so we capture trailers (e.g. grpc-status).
+	if !s.serverEnded {
+		return
+	}
+
+	// We need both method (request) and status (response) to emit a record.
+	if s.method == "" || s.status == 0 {
+		// Both directions ended but data is still incomplete — discard.
+		if s.clientEnded && s.serverEnded {
+			delete(p.streams, id)
+		}
+		return
+	}
+	delete(p.streams, id)
+
+	proto := model.ProtoHTTP2
+	method := s.method
+	grpcStatus := ""
+
+	if isGRPC(s.contentType) {
+		proto = model.ProtoGRPC
+		method = grpcMethod(s.path)
+		grpcStatus = grpcStatusName(s.grpcStatus)
+	}
+
+	duration := time.Since(s.startTime)
+
+	p.emit(model.Record{
+		Timestamp:  s.startTime,
+		Proto:      proto,
+		SrcIP:      p.srcIP,
+		DstIP:      p.dstIP,
+		Method:     method,
+		Path:       s.path,
+		Status:     s.status,
+		GRPCStatus: grpcStatus,
+		DurationMs: duration.Seconds() * 1000, //nolint:mnd // convert to milliseconds
+		TraceID:    s.traceID,
+	})
+}
+
+// isGRPC reports whether the content-type indicates a gRPC request.
+func isGRPC(contentType string) bool {
+	return strings.HasPrefix(contentType, "application/grpc")
+}
+
+// grpcMethod extracts "Service/Method" from a gRPC path like "/package.Service/Method".
+func grpcMethod(path string) string {
+	// Remove leading slash.
+	trimmed := strings.TrimPrefix(path, "/")
+
+	// Find the service part (last component before the method).
+	parts := strings.SplitN(trimmed, "/", 2)
+	if len(parts) != 2 {
+		return trimmed
+	}
+
+	service := parts[0]
+	method := parts[1]
+
+	// Strip the package prefix from the service name: "pkg.Service" -> "Service".
+	if idx := strings.LastIndex(service, "."); idx >= 0 {
+		service = service[idx+1:]
+	}
+
+	return fmt.Sprintf("%s/%s", service, method)
+}
+
+// grpcStatusNames maps gRPC status code strings to their canonical names.
+var grpcStatusNames = map[string]string{
+	"0":  "OK",
+	"1":  "CANCELLED",
+	"2":  "UNKNOWN",
+	"3":  "INVALID_ARGUMENT",
+	"4":  "DEADLINE_EXCEEDED",
+	"5":  "NOT_FOUND",
+	"6":  "ALREADY_EXISTS",
+	"7":  "PERMISSION_DENIED",
+	"8":  "RESOURCE_EXHAUSTED",
+	"9":  "FAILED_PRECONDITION",
+	"10": "ABORTED",
+	"11": "OUT_OF_RANGE",
+	"12": "UNIMPLEMENTED",
+	"13": "INTERNAL",
+	"14": "UNAVAILABLE",
+	"15": "DATA_LOSS",
+	"16": "UNAUTHENTICATED",
+}
+
+// grpcStatusName maps a gRPC status code string to its name.
+func grpcStatusName(code string) string {
+	if n, ok := grpcStatusNames[code]; ok {
+		return n
+	}
+	if code == "" {
+		return ""
+	}
+	return "CODE_" + code
+}

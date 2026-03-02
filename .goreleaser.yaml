@@ -7,6 +7,8 @@ builds:
   - id: trc
     main: .
     binary: trc
+    env:
+      - CGO_ENABLED=0
     ldflags:
       - -X main.version={{.Version}}
     goos:
@@ -33,5 +35,37 @@ brews:
       owner: mickamy
       name: homebrew-tap
       token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+
+dockers:
+  - id: trcd-amd64
+    ids: []
+    goos: linux
+    goarch: amd64
+    image_templates:
+      - "ghcr.io/mickamy/trcd:{{ .Version }}-amd64"
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--build-arg=VERSION={{ .Version }}"
+  - id: trcd-arm64
+    ids: []
+    goos: linux
+    goarch: arm64
+    image_templates:
+      - "ghcr.io/mickamy/trcd:{{ .Version }}-arm64"
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--build-arg=VERSION={{ .Version }}"
+
+docker_manifests:
+  - name_template: "ghcr.io/mickamy/trcd:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/mickamy/trcd:{{ .Version }}-amd64"
+      - "ghcr.io/mickamy/trcd:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/mickamy/trcd:latest"
+    image_templates:
+      - "ghcr.io/mickamy/trcd:{{ .Version }}-amd64"
+      - "ghcr.io/mickamy/trcd:{{ .Version }}-arm64"
 
 changelog: {}
