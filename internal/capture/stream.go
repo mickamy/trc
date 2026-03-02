@@ -211,10 +211,12 @@ func (f *streamFactory) handleStream(
 	}
 
 	// Wait briefly for the client direction to identify the protocol.
+	timer := time.NewTimer(500 * time.Millisecond) //nolint:mnd // peer detection grace period
+	defer timer.Stop()
 	select {
 	case <-cs.h2Ready:
 		cs.h2.runDirection(br, dirServer)
-	case <-time.After(500 * time.Millisecond): //nolint:mnd // peer detection grace period
+	case <-timer.C:
 		_, _ = io.Copy(io.Discard, br)
 	}
 }

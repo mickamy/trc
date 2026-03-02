@@ -38,7 +38,7 @@ func validateNetwork(ctx context.Context, runner exec.Runner, network string) (s
 		"network", "inspect", network, "--format", "{{.Name}}",
 	)
 	if err != nil {
-		return "", fmt.Errorf("network %q not found: %w", network, err)
+		return "", fmt.Errorf("inspecting network %q: %w", network, err)
 	}
 	return strings.TrimSpace(string(out)), nil
 }
