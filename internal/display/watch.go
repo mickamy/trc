@@ -76,9 +76,13 @@ func formatRecord(r model.Record) string {
 		methodPath = r.Method
 	}
 
-	return fmt.Sprintf("%-12s %-5s  %-12s → %-12s  %-28s %4s  %s",
+	line := fmt.Sprintf("%-12s %-5s  %-12s → %-12s  %-28s %4s  %s",
 		ts, string(r.Proto), src, dst, methodPath, status, dur,
 	)
+	if r.TraceID != "" {
+		line += "  " + r.TraceID
+	}
+	return line
 }
 
 func formatStatus(r model.Record) string {

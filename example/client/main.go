@@ -25,7 +25,14 @@ func main() {
 }
 
 func call(url string) {
-	resp, err := http.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "client: %v\n", err)
+		return
+	}
+	req.Header.Set("X-Request-Id", fmt.Sprintf("trc-%d", time.Now().UnixNano()))
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "client: %v\n", err)
 		return

@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/encoding"
+	"google.golang.org/grpc/metadata"
 )
 
 // rawCodec passes raw bytes without protobuf serialization.
@@ -81,6 +82,9 @@ func callAuth(ctx context.Context, traceID string) (string, error) {
 		return "", fmt.Errorf("connecting to auth: %w", err)
 	}
 	defer conn.Close()
+
+	// Pass trace-id as gRPC metadata.
+	ctx = metadata.AppendToOutgoingContext(ctx, "x-request-id", traceID)
 
 	// Call Verify using the raw client invoke (no proto needed).
 	var result []byte
