@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/gopacket"
@@ -45,6 +46,9 @@ type connState struct {
 	h2      *http2Parser
 	h2Once  sync.Once
 	h2Ready chan struct{} // closed when h2 parser is created
+
+	// refs tracks the number of active stream directions.
+	refs int32
 }
 
 func newConnState(clientIP, serverIP string) *connState {
@@ -97,7 +101,8 @@ func (f *streamFactory) New(
 }
 
 // getOrCreateConn returns the shared connection state for a connection,
-// looking up both the key and its reverse.
+// looking up both the key and its reverse. It increments the reference
+// count; callers must call releaseConn when the stream direction finishes.
 func (f *streamFactory) getOrCreateConn(
 	key connKey, clientIP, serverIP string,
 ) *connState {
@@ -105,17 +110,36 @@ func (f *streamFactory) getOrCreateConn(
 	defer f.mu.Unlock()
 
 	if cs, ok := f.peers[key]; ok {
+		atomic.AddInt32(&cs.refs, 1)
 		return cs
 	}
 	rev := key.reverse()
 	if cs, ok := f.peers[rev]; ok {
 		f.peers[key] = cs
+		atomic.AddInt32(&cs.refs, 1)
 		return cs
 	}
 
 	cs := newConnState(clientIP, serverIP)
+	atomic.AddInt32(&cs.refs, 1)
 	f.peers[key] = cs
 	return cs
+}
+
+// releaseConn decrements the reference count and removes the connection
+// state from peers when both directions have finished.
+func (f *streamFactory) releaseConn(key connKey) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	cs, ok := f.peers[key]
+	if !ok {
+		return
+	}
+	if atomic.AddInt32(&cs.refs, -1) <= 0 {
+		delete(f.peers, key)
+		delete(f.peers, key.reverse())
+	}
 }
 
 // handleStream reads the stream and delegates to the appropriate
@@ -147,6 +171,7 @@ func (f *streamFactory) handleStream(
 			return
 		}
 		cs := f.getOrCreateConn(key, srcIP, dstIP)
+		defer f.releaseConn(key)
 		cs.h2Once.Do(func() {
 			cs.clientIP = srcIP
 			cs.serverIP = dstIP
@@ -161,6 +186,7 @@ func (f *streamFactory) handleStream(
 	if strings.HasPrefix(s, "HTTP/") {
 		// For response streams, srcIP is the server and dstIP is the client.
 		cs := f.getOrCreateConn(key, dstIP, srcIP)
+		defer f.releaseConn(key)
 		runHTTP1Response(br, cs, cs.clientIP, cs.serverIP, f.emit)
 		return
 	}
@@ -168,6 +194,7 @@ func (f *streamFactory) handleStream(
 	// HTTP/1.1 request direction: starts with an HTTP method.
 	if looksLikeHTTPMethod(s) {
 		cs := f.getOrCreateConn(key, srcIP, dstIP)
+		defer f.releaseConn(key)
 		runHTTP1Request(br, cs)
 		return
 	}
@@ -175,6 +202,7 @@ func (f *streamFactory) handleStream(
 	// Possibly HTTP/2 server direction — binary frames without h2c preface.
 	// Check if the peer has already been identified as HTTP/2.
 	cs := f.getOrCreateConn(key, dstIP, srcIP)
+	defer f.releaseConn(key)
 	select {
 	case <-cs.h2Ready:
 		cs.h2.runDirection(br, dirServer)
