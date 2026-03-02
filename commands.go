@@ -145,6 +145,7 @@ func loadFromFile(
 
 	var records []model.Record
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) //nolint:mnd // 10 MiB max token size
 	for scanner.Scan() {
 		var rec model.Record
 		if err := rec.UnmarshalNDJSON(scanner.Bytes()); err != nil {
@@ -223,6 +224,7 @@ func collectRecords(
 
 	var records []model.Record
 	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) //nolint:mnd // 10 MiB max token size
 
 	for {
 		select {
