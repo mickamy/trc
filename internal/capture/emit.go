@@ -2,6 +2,7 @@ package capture
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"sync"
 
@@ -24,5 +25,8 @@ func NewEmitter(w io.Writer) *Emitter {
 func (e *Emitter) Emit(r model.Record) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.enc.Encode(r)
+	if err := e.enc.Encode(r); err != nil {
+		return fmt.Errorf("encoding record: %w", err)
+	}
+	return nil
 }

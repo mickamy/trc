@@ -3,6 +3,7 @@ package capture_test
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -41,8 +42,8 @@ func TestEmitter_Emit(t *testing.T) {
 	if decoded.Proto != model.ProtoHTTP1 {
 		t.Errorf("Proto = %q, want %q", decoded.Proto, model.ProtoHTTP1)
 	}
-	if decoded.Method != "GET" {
-		t.Errorf("Method = %q, want %q", decoded.Method, "GET")
+	if decoded.Method != http.MethodGet {
+		t.Errorf("Method = %q, want %q", decoded.Method, http.MethodGet)
 	}
 }
 
