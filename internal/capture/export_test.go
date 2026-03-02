@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mickamy/trc/internal/model"
@@ -16,26 +17,38 @@ var ExtractTraceIDFromHeader = extractTraceID
 // ParseTraceparentValue exports parseTraceparent for testing.
 var ParseTraceparentValue = parseTraceparent
 
-// ParseHTTP1 runs the http1Parser on raw input and returns collected records.
-func ParseHTTP1(t *testing.T, raw, srcIP, dstIP string) []model.Record {
+// ParseHTTP1 runs the HTTP/1.1 request and response parsers on separate
+// input streams and returns collected records.
+func ParseHTTP1(
+	t *testing.T,
+	reqRaw, respRaw, clientIP, serverIP string,
+) []model.Record {
 	t.Helper()
 
+	cs := newConnState(clientIP, serverIP)
+	var mu sync.Mutex
 	var records []model.Record
-	p := &http1Parser{
-		srcIP: srcIP,
-		dstIP: dstIP,
-		emit: func(r model.Record) {
-			records = append(records, r)
-		},
+	emit := func(r model.Record) {
+		mu.Lock()
+		records = append(records, r)
+		mu.Unlock()
 	}
-	p.run(bufio.NewReader(strings.NewReader(raw)))
-	return records
-}
 
-// NewHTTP1Parser exports http1Parser construction for testing.
-func NewHTTP1Parser(srcIP, dstIP string, emit func(model.Record)) func(r *bufio.Reader) {
-	p := &http1Parser{srcIP: srcIP, dstIP: dstIP, emit: emit}
-	return p.run
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		runHTTP1Request(bufio.NewReader(strings.NewReader(reqRaw)), cs)
+	}()
+	go func() {
+		defer wg.Done()
+		runHTTP1Response(
+			bufio.NewReader(strings.NewReader(respRaw)),
+			cs, clientIP, serverIP, emit,
+		)
+	}()
+	wg.Wait()
+	return records
 }
 
 // ExtractTraceID exports extractTraceID for external test packages.
@@ -64,14 +77,65 @@ var GRPCStatusName = grpcStatusName
 // IsGRPC exports isGRPC for testing.
 var IsGRPC = isGRPC
 
-// HandleStream runs the streamFactory's handleStream on raw input.
-func HandleStream(t *testing.T, raw, srcIP, dstIP string) []model.Record {
+// HandleStreamPair runs both directions of a connection through protocol
+// detection and returns collected records.
+func HandleStreamPair(
+	t *testing.T,
+	clientRaw, serverRaw, clientIP, serverIP string,
+) []model.Record {
 	t.Helper()
 
+	var mu sync.Mutex
 	var records []model.Record
-	f := newStreamFactory(func(r model.Record) {
+	emit := func(r model.Record) {
+		mu.Lock()
 		records = append(records, r)
-	})
-	f.handleStream(srcIP, dstIP, strings.NewReader(raw))
+		mu.Unlock()
+	}
+
+	clientBR := bufio.NewReaderSize(
+		strings.NewReader(clientRaw), 4096, //nolint:mnd
+	)
+	serverBR := bufio.NewReaderSize(
+		strings.NewReader(serverRaw), 4096, //nolint:mnd
+	)
+
+	// Detect protocol from client direction.
+	peek, _ := clientBR.Peek(h2cPrefaceLen)
+	s := string(peek)
+
+	var wg sync.WaitGroup
+
+	switch {
+	case len(peek) >= h2cPrefaceLen && s == h2cPreface:
+		// HTTP/2
+		_, _ = clientBR.Discard(h2cPrefaceLen)
+		p := newHTTP2Parser(clientIP, serverIP, emit)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			p.runDirection(clientBR, dirClient)
+		}()
+		go func() {
+			defer wg.Done()
+			p.runDirection(serverBR, dirServer)
+		}()
+	case looksLikeHTTPMethod(s):
+		// HTTP/1.1
+		cs := newConnState(clientIP, serverIP)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			runHTTP1Request(clientBR, cs)
+		}()
+		go func() {
+			defer wg.Done()
+			runHTTP1Response(serverBR, cs, clientIP, serverIP, emit)
+		}()
+	default:
+		// Unknown protocol — return empty.
+	}
+
+	wg.Wait()
 	return records
 }

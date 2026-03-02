@@ -17,50 +17,68 @@ var traceHeaders = []string{
 	"X-Request-Id",
 }
 
-// http1Parser reads HTTP/1.1 request/response pairs from a buffered reader
-// and emits Records for each completed exchange.
-type http1Parser struct {
-	srcIP string
-	dstIP string
-	emit  func(model.Record)
-}
+// runHTTP1Request reads HTTP/1.1 requests from the client→server stream
+// and sends them to cs.reqCh for pairing with responses.
+// It closes cs.reqCh on return to unblock the response reader.
+func runHTTP1Request(r *bufio.Reader, cs *connState) {
+	defer close(cs.reqCh)
 
-// run reads HTTP/1.1 request/response pairs from r until EOF or error.
-func (p *http1Parser) run(r *bufio.Reader) {
 	for {
-		reqStart := time.Now()
-
 		req, err := http.ReadRequest(r)
 		if err != nil {
 			return
 		}
+
+		traceID := extractTraceID(req.Header)
 
 		// Drain and close the request body so the reader advances
 		// past it to the next message boundary.
 		_, _ = io.Copy(io.Discard, req.Body)
 		_ = req.Body.Close()
 
-		traceID := extractTraceID(req.Header)
+		select {
+		case cs.reqCh <- h1Pending{
+			method:  req.Method,
+			path:    req.URL.RequestURI(),
+			traceID: traceID,
+			start:   time.Now(),
+		}:
+		default:
+			// Channel full — drop to avoid blocking.
+		}
+	}
+}
 
-		resp, err := http.ReadResponse(bufio.NewReader(r), req)
+// runHTTP1Response reads HTTP/1.1 responses from the server→client stream,
+// pairs them with requests from cs.reqCh, and emits records.
+func runHTTP1Response(
+	r *bufio.Reader, cs *connState,
+	clientIP, serverIP string, emit func(model.Record),
+) {
+	for {
+		resp, err := http.ReadResponse(r, nil)
 		if err != nil {
 			return
 		}
 		_, _ = io.Copy(io.Discard, resp.Body)
 		_ = resp.Body.Close()
 
-		duration := time.Since(reqStart)
+		pending, ok := <-cs.reqCh
+		if !ok {
+			return
+		}
 
-		p.emit(model.Record{
-			Timestamp:  reqStart,
+		duration := time.Since(pending.start)
+		emit(model.Record{
+			Timestamp:  pending.start,
 			Proto:      model.ProtoHTTP1,
-			SrcIP:      p.srcIP,
-			DstIP:      p.dstIP,
-			Method:     req.Method,
-			Path:       req.URL.RequestURI(),
+			SrcIP:      clientIP,
+			DstIP:      serverIP,
+			Method:     pending.method,
+			Path:       pending.path,
 			Status:     resp.StatusCode,
 			DurationMs: float64(duration.Milliseconds()),
-			TraceID:    traceID,
+			TraceID:    pending.traceID,
 		})
 	}
 }

@@ -61,16 +61,17 @@ func TestExtractTraceID(t *testing.T) {
 func TestHTTP1Parser_Run(t *testing.T) {
 	t.Parallel()
 
-	raw := "GET /users/42 HTTP/1.1\r\n" +
+	reqRaw := "GET /users/42 HTTP/1.1\r\n" +
 		"Host: users\r\n" +
 		"X-Request-Id: req-abc\r\n" +
-		"\r\n" +
-		"HTTP/1.1 200 OK\r\n" +
+		"\r\n"
+
+	respRaw := "HTTP/1.1 200 OK\r\n" +
 		"Content-Length: 13\r\n" +
 		"\r\n" +
 		`{"id":"42"}` + "\r\n"
 
-	records := capture.ParseHTTP1(t, raw, "10.0.0.1", "10.0.0.2")
+	records := capture.ParseHTTP1(t, reqRaw, respRaw, "10.0.0.1", "10.0.0.2")
 
 	if len(records) != 1 {
 		t.Fatalf("got %d records, want 1", len(records))
@@ -103,12 +104,13 @@ func TestHTTP1Parser_Run(t *testing.T) {
 func TestHTTP1Parser_MultipleExchanges(t *testing.T) {
 	t.Parallel()
 
-	raw := "GET /a HTTP/1.1\r\nHost: svc\r\n\r\n" +
-		"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n" +
-		"POST /b HTTP/1.1\r\nHost: svc\r\nContent-Length: 0\r\n\r\n" +
+	reqRaw := "GET /a HTTP/1.1\r\nHost: svc\r\n\r\n" +
+		"POST /b HTTP/1.1\r\nHost: svc\r\nContent-Length: 0\r\n\r\n"
+
+	respRaw := "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n" +
 		"HTTP/1.1 201 Created\r\nContent-Length: 0\r\n\r\n"
 
-	records := capture.ParseHTTP1(t, raw, "10.0.0.1", "10.0.0.2")
+	records := capture.ParseHTTP1(t, reqRaw, respRaw, "10.0.0.1", "10.0.0.2")
 
 	if len(records) != 2 {
 		t.Fatalf("got %d records, want 2", len(records))

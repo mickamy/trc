@@ -5,12 +5,21 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/hpack"
 
 	"github.com/mickamy/trc/internal/model"
+)
+
+// direction indicates which side of a TCP connection a stream belongs to.
+type direction int
+
+const (
+	dirClient direction = iota
+	dirServer
 )
 
 // streamState tracks a single HTTP/2 stream's request/response progress.
@@ -26,56 +35,101 @@ type streamState struct {
 	headerBuf []byte
 }
 
-// http2Parser reads HTTP/2 frames from a reader and emits Records.
+// http2Parser reads HTTP/2 frames from both directions of a connection
+// and emits Records. It is safe for concurrent use from two goroutines
+// (one per direction).
 type http2Parser struct {
 	srcIP   string
 	dstIP   string
 	emit    func(model.Record)
+	mu      sync.Mutex
 	streams map[uint32]*streamState
-	decoder *hpack.Decoder
-	// activeStreamID is set before each HPACK decode so the onHeader callback
-	// knows which stream to update. Only accessed from the run goroutine.
-	activeStreamID uint32
 }
 
 func newHTTP2Parser(srcIP, dstIP string, emit func(model.Record)) *http2Parser {
-	p := &http2Parser{
+	return &http2Parser{
 		srcIP:   srcIP,
 		dstIP:   dstIP,
 		emit:    emit,
 		streams: make(map[uint32]*streamState),
 	}
-	p.decoder = hpack.NewDecoder(4096, p.onHeader)
-	return p
 }
 
-// run reads HTTP/2 frames from r until EOF or error.
+// run reads HTTP/2 frames from r (single direction). Backward compatible
+// entry point used by tests.
 func (p *http2Parser) run(r io.Reader) {
+	p.runDirection(r, dirClient)
+}
+
+// runDirection reads HTTP/2 frames from r for the given direction until
+// EOF or error. Each direction maintains its own HPACK decoder.
+func (p *http2Parser) runDirection(r io.Reader, _ direction) {
 	framer := http2.NewFramer(io.Discard, r)
 	framer.ReadMetaHeaders = nil // we decode HPACK ourselves
 	// Allow large frames in captures without erroring.
 	framer.SetMaxReadFrameSize(1 << 24) //nolint:mnd // 16 MiB max frame
+
+	var activeStreamID uint32
+	decoder := hpack.NewDecoder(4096, func(f hpack.HeaderField) { //nolint:mnd // HPACK default table size
+		// Called during decoder.Write inside processFrame, mutex already held.
+		s, ok := p.streams[activeStreamID]
+		if !ok {
+			return
+		}
+		switch f.Name {
+		case ":method":
+			s.method = f.Value
+		case ":path":
+			s.path = f.Value
+		case ":status":
+			s.status, _ = strconv.Atoi(f.Value)
+		case "content-type":
+			s.contentType = f.Value
+		case "grpc-status":
+			s.grpcStatus = f.Value
+		case "traceparent":
+			s.traceID = parseTraceparent(f.Value)
+		case "x-trace-id":
+			if s.traceID == "" {
+				s.traceID = f.Value
+			}
+		case "x-request-id":
+			if s.traceID == "" {
+				s.traceID = f.Value
+			}
+		}
+	})
 
 	for {
 		f, err := framer.ReadFrame()
 		if err != nil {
 			return
 		}
-
-		switch frame := f.(type) {
-		case *http2.HeadersFrame:
-			p.handleHeaders(frame)
-		case *http2.ContinuationFrame:
-			p.handleContinuation(frame)
-		case *http2.DataFrame:
-			p.handleData(frame)
-		default:
-			// SETTINGS, WINDOW_UPDATE, PING, etc. — skip
-		}
+		p.processFrame(f, decoder, &activeStreamID)
 	}
 }
 
-func (p *http2Parser) handleHeaders(f *http2.HeadersFrame) {
+func (p *http2Parser) processFrame(
+	f http2.Frame, decoder *hpack.Decoder, activeStreamID *uint32,
+) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	switch frame := f.(type) {
+	case *http2.HeadersFrame:
+		p.handleHeaders(frame, decoder, activeStreamID)
+	case *http2.ContinuationFrame:
+		p.handleContinuation(frame, decoder, activeStreamID)
+	case *http2.DataFrame:
+		p.handleData(frame)
+	default:
+		// SETTINGS, WINDOW_UPDATE, PING, etc. — skip
+	}
+}
+
+func (p *http2Parser) handleHeaders(
+	f *http2.HeadersFrame, decoder *hpack.Decoder, activeStreamID *uint32,
+) {
 	id := f.StreamID
 	s, ok := p.streams[id]
 	if !ok {
@@ -86,7 +140,7 @@ func (p *http2Parser) handleHeaders(f *http2.HeadersFrame) {
 	s.headerBuf = append(s.headerBuf, f.HeaderBlockFragment()...)
 
 	if f.HeadersEnded() {
-		p.decodeHeaders(id)
+		p.decodeHeaders(id, decoder, activeStreamID)
 	}
 
 	if f.StreamEnded() {
@@ -94,7 +148,9 @@ func (p *http2Parser) handleHeaders(f *http2.HeadersFrame) {
 	}
 }
 
-func (p *http2Parser) handleContinuation(f *http2.ContinuationFrame) {
+func (p *http2Parser) handleContinuation(
+	f *http2.ContinuationFrame, decoder *hpack.Decoder, activeStreamID *uint32,
+) {
 	id := f.StreamID
 	s, ok := p.streams[id]
 	if !ok {
@@ -104,7 +160,7 @@ func (p *http2Parser) handleContinuation(f *http2.ContinuationFrame) {
 	s.headerBuf = append(s.headerBuf, f.HeaderBlockFragment()...)
 
 	if f.HeadersEnded() {
-		p.decodeHeaders(id)
+		p.decodeHeaders(id, decoder, activeStreamID)
 	}
 }
 
@@ -114,50 +170,21 @@ func (p *http2Parser) handleData(f *http2.DataFrame) {
 	}
 }
 
-func (p *http2Parser) decodeHeaders(id uint32) {
+func (p *http2Parser) decodeHeaders(
+	id uint32, decoder *hpack.Decoder, activeStreamID *uint32,
+) {
 	s, ok := p.streams[id]
 	if !ok {
 		return
 	}
 
-	p.activeStreamID = id
-	if _, err := p.decoder.Write(s.headerBuf); err != nil {
+	*activeStreamID = id
+	if _, err := decoder.Write(s.headerBuf); err != nil {
 		// Malformed headers — skip this stream.
 		delete(p.streams, id)
 		return
 	}
 	s.headerBuf = nil
-}
-
-// onHeader is the HPACK callback invoked for each decoded header field.
-func (p *http2Parser) onHeader(f hpack.HeaderField) {
-	s, ok := p.streams[p.activeStreamID]
-	if !ok {
-		return
-	}
-
-	switch f.Name {
-	case ":method":
-		s.method = f.Value
-	case ":path":
-		s.path = f.Value
-	case ":status":
-		s.status, _ = strconv.Atoi(f.Value)
-	case "content-type":
-		s.contentType = f.Value
-	case "grpc-status":
-		s.grpcStatus = f.Value
-	case "traceparent":
-		s.traceID = parseTraceparent(f.Value)
-	case "x-trace-id":
-		if s.traceID == "" {
-			s.traceID = f.Value
-		}
-	case "x-request-id":
-		if s.traceID == "" {
-			s.traceID = f.Value
-		}
-	}
 }
 
 func (p *http2Parser) finishStream(id uint32) {
