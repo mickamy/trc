@@ -36,7 +36,9 @@ func handleWatch(ctx context.Context, flags globalFlags, _ []string) error {
 		return fmt.Errorf("starting capture: %w", err)
 	}
 	defer func() {
-		docker.StopCapture(ctx, e.runner)
+		// Use WithoutCancel so that container cleanup succeeds even
+		// after the parent context has been cancelled (e.g. Ctrl-C).
+		docker.StopCapture(context.WithoutCancel(ctx), e.runner)
 		_ = cleanup()
 	}()
 
@@ -203,7 +205,9 @@ func captureForDuration(
 		return nil, nil, fmt.Errorf("starting capture: %w", err)
 	}
 	defer func() {
-		docker.StopCapture(ctx, e.runner)
+		// Use WithoutCancel so that container cleanup succeeds even
+		// after the parent context has been cancelled (e.g. Ctrl-C).
+		docker.StopCapture(context.WithoutCancel(ctx), e.runner)
 		_ = cleanup()
 	}()
 
