@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -24,6 +25,9 @@ func run() int {
 	fs.StringVar(&cfg.BPFFilter, "bpf", cfg.BPFFilter, "BPF filter expression")
 
 	if err := fs.Parse(os.Args[1:]); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 1
 	}
 
