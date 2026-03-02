@@ -63,3 +63,15 @@ var GRPCStatusName = grpcStatusName
 
 // IsGRPC exports isGRPC for testing.
 var IsGRPC = isGRPC
+
+// HandleStream runs the streamFactory's handleStream on raw input.
+func HandleStream(t *testing.T, raw, srcIP, dstIP string) []model.Record {
+	t.Helper()
+
+	var records []model.Record
+	f := newStreamFactory(func(r model.Record) {
+		records = append(records, r)
+	})
+	f.handleStream(srcIP, dstIP, strings.NewReader(raw))
+	return records
+}
