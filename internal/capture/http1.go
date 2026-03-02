@@ -36,11 +36,15 @@ func runHTTP1Request(r *bufio.Reader, cs *connState) {
 		_, _ = io.Copy(io.Discard, req.Body)
 		_ = req.Body.Close()
 
-		cs.reqCh <- h1Pending{
+		select {
+		case cs.reqCh <- h1Pending{
 			method:  req.Method,
 			path:    req.URL.RequestURI(),
 			traceID: traceID,
 			start:   time.Now(),
+		}:
+		case <-cs.done:
+			return
 		}
 	}
 }
@@ -51,6 +55,7 @@ func runHTTP1Response(
 	r *bufio.Reader, cs *connState,
 	clientIP, serverIP string, emit func(model.Record),
 ) {
+	defer close(cs.done)
 	for {
 		resp, err := http.ReadResponse(r, nil)
 		if err != nil {

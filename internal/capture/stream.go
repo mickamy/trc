@@ -41,6 +41,9 @@ type connState struct {
 
 	// HTTP/1.1: request queue for pairing with responses.
 	reqCh chan h1Pending
+	// done is closed by the HTTP/1.1 response goroutine when it exits,
+	// so the request goroutine can unblock and return.
+	done chan struct{}
 
 	// HTTP/2: shared parser accessed by both directions concurrently.
 	h2      *http2Parser
@@ -56,6 +59,7 @@ func newConnState(clientIP, serverIP string) *connState {
 		clientIP: clientIP,
 		serverIP: serverIP,
 		reqCh:    make(chan h1Pending, 64), //nolint:mnd // reasonable pipeline depth
+		done:     make(chan struct{}),
 		h2Ready:  make(chan struct{}),
 	}
 }
