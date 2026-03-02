@@ -59,6 +59,9 @@ func run() int {
 
 	// Re-parse remaining args so flags after the subcommand are recognized.
 	if err := fs.Parse(rest[1:]); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 1
 	}
 	rest = fs.Args()
