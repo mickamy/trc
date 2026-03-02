@@ -1,6 +1,7 @@
 package model_test
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -85,7 +86,10 @@ func TestRecord_MarshalNDJSON(t *testing.T) {
 func TestRecord_UnmarshalNDJSON(t *testing.T) {
 	t.Parallel()
 
-	input := `{"ts":"2025-01-01T12:00:00.123Z","proto":"http1","src_ip":"172.18.0.3","dst_ip":"172.18.0.5","method":"GET","path":"/users/42","status":200,"duration_ms":12,"trace_id":"abc-123"}`
+	input := `{"ts":"2025-01-01T12:00:00.123Z","proto":"http1",` +
+		`"src_ip":"172.18.0.3","dst_ip":"172.18.0.5",` +
+		`"method":"GET","path":"/users/42","status":200,` +
+		`"duration_ms":12,"trace_id":"abc-123"}`
 
 	var r model.Record
 	if err := r.UnmarshalNDJSON([]byte(input)); err != nil {
@@ -98,8 +102,8 @@ func TestRecord_UnmarshalNDJSON(t *testing.T) {
 	if r.SrcIP != "172.18.0.3" {
 		t.Errorf("SrcIP = %q, want %q", r.SrcIP, "172.18.0.3")
 	}
-	if r.Method != "GET" {
-		t.Errorf("Method = %q, want %q", r.Method, "GET")
+	if r.Method != http.MethodGet {
+		t.Errorf("Method = %q, want %q", r.Method, http.MethodGet)
 	}
 	if r.Path != "/users/42" {
 		t.Errorf("Path = %q, want %q", r.Path, "/users/42")
@@ -153,4 +157,3 @@ func TestRecord_RoundTrip(t *testing.T) {
 		t.Errorf("DstName = %q, want %q", decoded.DstName, original.DstName)
 	}
 }
-

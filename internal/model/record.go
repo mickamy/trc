@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -37,12 +38,15 @@ type Record struct {
 func (r Record) MarshalNDJSON() ([]byte, error) {
 	b, err := json.Marshal(r)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("marshaling record: %w", err)
 	}
 	return append(b, '\n'), nil
 }
 
 // UnmarshalNDJSON decodes a single JSON line into r.
 func (r *Record) UnmarshalNDJSON(line []byte) error {
-	return json.Unmarshal(line, r)
+	if err := json.Unmarshal(line, r); err != nil {
+		return fmt.Errorf("unmarshaling record: %w", err)
+	}
+	return nil
 }
