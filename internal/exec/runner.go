@@ -91,12 +91,52 @@ func (r *runner) RuntimePipe(ctx context.Context, args ...string) (io.ReadCloser
 	return stdout, cleanup, nil
 }
 
+// buildArgs splits a command string into binary and arguments, respecting
+// single and double quotes so that paths with spaces work correctly.
 func buildArgs(command string) (string, []string, error) {
-	parts := strings.Fields(command)
+	parts, err := splitCommand(command)
+	if err != nil {
+		return "", nil, err
+	}
 	if len(parts) == 0 {
 		return "", nil, errEmptyCommand
 	}
 	return parts[0], parts[1:], nil
+}
+
+// splitCommand splits a shell-like command string into tokens, handling
+// single-quoted and double-quoted substrings.
+func splitCommand(s string) ([]string, error) {
+	var parts []string
+	var cur strings.Builder
+	inSingle := false
+	inDouble := false
+
+	for i := range len(s) {
+		c := s[i]
+		switch {
+		case c == '\'' && !inDouble:
+			inSingle = !inSingle
+		case c == '"' && !inSingle:
+			inDouble = !inDouble
+		case c == ' ' && !inSingle && !inDouble:
+			if cur.Len() > 0 {
+				parts = append(parts, cur.String())
+				cur.Reset()
+			}
+		default:
+			cur.WriteByte(c)
+		}
+	}
+
+	if inSingle || inDouble {
+		return nil, errors.New("unclosed quote in command")
+	}
+
+	if cur.Len() > 0 {
+		parts = append(parts, cur.String())
+	}
+	return parts, nil
 }
 
 func buildCmd(ctx context.Context, bin string, baseArgs, args []string) *exec.Cmd {
