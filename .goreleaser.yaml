@@ -29,53 +29,30 @@ brews:
   - name: trc
     homepage: https://github.com/mickamy/trc
     description: A local request tracer for Docker microservices.
-    install: |
-      bin.install "trc"
+    directory: Formula
     repository:
       owner: mickamy
       name: homebrew-tap
       token: "{{ .Env.TAP_GITHUB_TOKEN }}"
 
-dockers:
-  - id: trcd-amd64
+dockers_v2:
+  - id: trcd
     ids: []
-    goos: linux
-    goarch: amd64
-    image_templates:
-      - "ghcr.io/mickamy/trcd:{{ .Version }}-amd64"
     dockerfile: Dockerfile
+    images:
+      - "ghcr.io/mickamy/trcd"
+    tags:
+      - "v{{ .Version }}"
+      - latest
+    platforms:
+      - linux/amd64
+      - linux/arm64
     extra_files:
       - go.mod
       - go.sum
       - cmd/
       - internal/
-    build_flag_templates:
-      - "--platform=linux/amd64"
-      - "--build-arg=VERSION={{ .Version }}"
-  - id: trcd-arm64
-    ids: []
-    goos: linux
-    goarch: arm64
-    image_templates:
-      - "ghcr.io/mickamy/trcd:{{ .Version }}-arm64"
-    dockerfile: Dockerfile
-    extra_files:
-      - go.mod
-      - go.sum
-      - cmd/
-      - internal/
-    build_flag_templates:
-      - "--platform=linux/arm64"
-      - "--build-arg=VERSION={{ .Version }}"
-
-docker_manifests:
-  - name_template: "ghcr.io/mickamy/trcd:{{ .Version }}"
-    image_templates:
-      - "ghcr.io/mickamy/trcd:{{ .Version }}-amd64"
-      - "ghcr.io/mickamy/trcd:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/mickamy/trcd:latest"
-    image_templates:
-      - "ghcr.io/mickamy/trcd:{{ .Version }}-amd64"
-      - "ghcr.io/mickamy/trcd:{{ .Version }}-arm64"
+    build_args:
+      VERSION: "{{ .Version }}"
 
 changelog: {}
