@@ -59,12 +59,12 @@ func StreamWatch(
 
 		fmt.Fprintln(w, formatRecord(rec))
 	}
-	// If the context was cancelled the reader was closed, causing a read
-	// error that we can safely ignore.
-	if ctx.Err() != nil {
-		return nil
-	}
 	if err := scanner.Err(); err != nil {
+		// If the context was cancelled the reader was closed, causing a
+		// read error that we can safely ignore.
+		if ctx.Err() != nil {
+			return nil //nolint:nilerr // intentional: ctx cancel closed the reader
+		}
 		return fmt.Errorf("reading records: %w", err)
 	}
 	return nil

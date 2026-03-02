@@ -216,32 +216,37 @@ func captureForDuration(
 }
 
 // collectRecords reads NDJSON records from r for the given duration.
+// If r implements io.Closer it will be closed when the timeout fires so
+// that a blocking read is interrupted promptly.
 func collectRecords(
 	ctx context.Context, r io.Reader, d time.Duration,
 ) ([]model.Record, error) {
 	ctx, cancel := context.WithTimeout(ctx, d)
 	defer cancel()
 
+	if rc, ok := r.(io.Closer); ok {
+		go func() {
+			<-ctx.Done()
+			_ = rc.Close()
+		}()
+	}
+
 	var records []model.Record
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) //nolint:mnd // 10 MiB max token size
 
-	for {
-		select {
-		case <-ctx.Done():
-			return records, nil
-		default:
-		}
-
-		if !scanner.Scan() {
-			break
-		}
-
+	for scanner.Scan() {
 		var rec model.Record
 		if err := rec.UnmarshalNDJSON(scanner.Bytes()); err != nil {
 			continue
 		}
 		records = append(records, rec)
+	}
+
+	// If the context timed out the reader was closed, causing a read
+	// error that we can safely ignore.
+	if ctx.Err() != nil {
+		return records, nil
 	}
 
 	if err := scanner.Err(); err != nil {
