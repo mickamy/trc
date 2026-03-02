@@ -47,7 +47,12 @@ func handleWatch(ctx context.Context, flags globalFlags, _ []string) error {
 
 	// Periodically refresh the service map in the background.
 	var mu sync.RWMutex
-	go refreshServices(ctx, e.runner, network, &mu, &svcMap)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		refreshServices(ctx, e.runner, network, &mu, &svcMap)
+	}()
 
 	// Optionally tee raw NDJSON to a file for later analysis.
 	var r io.Reader = stdout
@@ -61,8 +66,10 @@ func handleWatch(ctx context.Context, flags globalFlags, _ []string) error {
 	}
 
 	resolve := func() docker.ServiceMap { return snapMap(&mu, &svcMap) }
-	if err := display.StreamWatch(ctx, r, resolve, flags.filter, os.Stdout); err != nil {
-		return fmt.Errorf("streaming watch: %w", err)
+	watchErr := display.StreamWatch(ctx, r, resolve, flags.filter, os.Stdout)
+	wg.Wait()
+	if watchErr != nil {
+		return fmt.Errorf("streaming watch: %w", watchErr)
 	}
 	return nil
 }
