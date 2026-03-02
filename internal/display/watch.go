@@ -24,6 +24,7 @@ func StreamWatch(
 	resolve ServiceResolver, filter string, w io.Writer,
 ) error {
 	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) //nolint:mnd // 10 MiB max token size
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
