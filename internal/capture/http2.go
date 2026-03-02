@@ -33,8 +33,9 @@ type streamState struct {
 	traceID     string
 	// headerBuf accumulates HEADERS/CONTINUATION fragments until END_HEADERS.
 	headerBuf []byte
-	// endStreamSeen is true once an END_STREAM flag has been observed.
-	endStreamSeen bool
+	// clientEnded / serverEnded track END_STREAM per direction.
+	clientEnded bool
+	serverEnded bool
 }
 
 // http2Parser reads HTTP/2 frames from both directions of a connection
@@ -65,7 +66,7 @@ func (p *http2Parser) run(r io.Reader) {
 
 // runDirection reads HTTP/2 frames from r for the given direction until
 // EOF or error. Each direction maintains its own HPACK decoder.
-func (p *http2Parser) runDirection(r io.Reader, _ direction) {
+func (p *http2Parser) runDirection(r io.Reader, dir direction) {
 	framer := http2.NewFramer(io.Discard, r)
 	framer.ReadMetaHeaders = nil // we decode HPACK ourselves
 	// Allow large frames in captures without erroring.
@@ -107,19 +108,19 @@ func (p *http2Parser) runDirection(r io.Reader, _ direction) {
 		if err != nil {
 			return
 		}
-		p.processFrame(f, decoder, &activeStreamID)
+		p.processFrame(f, dir, decoder, &activeStreamID)
 	}
 }
 
 func (p *http2Parser) processFrame(
-	f http2.Frame, decoder *hpack.Decoder, activeStreamID *uint32,
+	f http2.Frame, dir direction, decoder *hpack.Decoder, activeStreamID *uint32,
 ) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	switch frame := f.(type) {
 	case *http2.HeadersFrame:
-		p.handleHeaders(frame, decoder, activeStreamID)
+		p.handleHeaders(frame, dir, decoder, activeStreamID)
 	case *http2.ContinuationFrame:
 		p.handleContinuation(frame, decoder, activeStreamID)
 	case *http2.DataFrame:
@@ -130,13 +131,17 @@ func (p *http2Parser) processFrame(
 }
 
 func (p *http2Parser) handleHeaders(
-	f *http2.HeadersFrame, decoder *hpack.Decoder, activeStreamID *uint32,
+	f *http2.HeadersFrame, dir direction, decoder *hpack.Decoder, activeStreamID *uint32,
 ) {
 	id := f.StreamID
 	s, ok := p.streams[id]
 	if !ok {
-		s = &streamState{startTime: time.Now()}
+		s = &streamState{}
 		p.streams[id] = s
+	}
+	// Only record the start time from the client (request) direction.
+	if dir == dirClient && s.startTime.IsZero() {
+		s.startTime = time.Now()
 	}
 
 	s.headerBuf = append(s.headerBuf, f.HeaderBlockFragment()...)
