@@ -2,6 +2,7 @@ package capture
 
 import (
 	"bufio"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -41,3 +42,24 @@ func NewHTTP1Parser(srcIP, dstIP string, emit func(model.Record)) func(r *bufio.
 func ExtractTraceID(h http.Header) string {
 	return extractTraceID(h)
 }
+
+// ParseHTTP2 runs the http2Parser on raw input and returns collected records.
+func ParseHTTP2(t *testing.T, r io.Reader, srcIP, dstIP string) []model.Record {
+	t.Helper()
+
+	var records []model.Record
+	p := newHTTP2Parser(srcIP, dstIP, func(rec model.Record) {
+		records = append(records, rec)
+	})
+	p.run(r)
+	return records
+}
+
+// GRPCMethod exports grpcMethod for testing.
+var GRPCMethod = grpcMethod
+
+// GRPCStatusName exports grpcStatusName for testing.
+var GRPCStatusName = grpcStatusName
+
+// IsGRPC exports isGRPC for testing.
+var IsGRPC = isGRPC
