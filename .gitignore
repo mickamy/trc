@@ -23,6 +23,3 @@ go.work.sum
 
 # artifacts
 bin/
-
-# trc generated files
-.trc/
