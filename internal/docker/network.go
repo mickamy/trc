@@ -44,7 +44,7 @@ func validateNetwork(ctx context.Context, runner exec.Runner, network string) (s
 }
 
 func autoDetect(ctx context.Context, runner exec.Runner) (string, error) {
-	out, err := runner.RuntimeOutput(ctx, "network", "ls", "--format", "json")
+	out, err := runner.RuntimeOutput(ctx, "network", "ls", "--format", "{{json .}}")
 	if err != nil {
 		return "", fmt.Errorf("listing networks: %w", err)
 	}
