@@ -223,21 +223,26 @@ func collectRecords(
 	var records []model.Record
 	scanner := bufio.NewScanner(r)
 
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for scanner.Scan() {
-			var rec model.Record
-			if err := rec.UnmarshalNDJSON(scanner.Bytes()); err != nil {
-				continue
-			}
-			records = append(records, rec)
+	for {
+		select {
+		case <-ctx.Done():
+			return records, nil
+		default:
 		}
-	}()
 
-	select {
-	case <-ctx.Done():
-	case <-done:
+		if !scanner.Scan() {
+			break
+		}
+
+		var rec model.Record
+		if err := rec.UnmarshalNDJSON(scanner.Bytes()); err != nil {
+			continue
+		}
+		records = append(records, rec)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return records, err
 	}
 
 	return records, nil
