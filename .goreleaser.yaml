@@ -44,6 +44,11 @@ dockers:
     image_templates:
       - "ghcr.io/mickamy/trcd:{{ .Version }}-amd64"
     dockerfile: Dockerfile
+    extra_files:
+      - go.mod
+      - go.sum
+      - cmd/
+      - internal/
     build_flag_templates:
       - "--platform=linux/amd64"
       - "--build-arg=VERSION={{ .Version }}"
@@ -54,6 +59,11 @@ dockers:
     image_templates:
       - "ghcr.io/mickamy/trcd:{{ .Version }}-arm64"
     dockerfile: Dockerfile
+    extra_files:
+      - go.mod
+      - go.sum
+      - cmd/
+      - internal/
     build_flag_templates:
       - "--platform=linux/arm64"
       - "--build-arg=VERSION={{ .Version }}"
