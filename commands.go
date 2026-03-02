@@ -56,7 +56,7 @@ func handleWatch(ctx context.Context, flags globalFlags, _ []string) error {
 		if err != nil {
 			return fmt.Errorf("creating output file: %w", err)
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		r = io.TeeReader(stdout, f)
 	}
 
@@ -140,7 +140,7 @@ func loadFromFile(
 	if err != nil {
 		return nil, nil, fmt.Errorf("opening input file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var records []model.Record
 	scanner := bufio.NewScanner(f)
