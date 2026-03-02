@@ -70,6 +70,7 @@ func handleWatch(ctx context.Context, flags globalFlags, _ []string) error {
 		f, err := os.Create(flags.output)
 		if err != nil {
 			refreshCancel()
+			wg.Wait()
 			return fmt.Errorf("creating output file: %w", err)
 		}
 		defer func() { _ = f.Close() }()
