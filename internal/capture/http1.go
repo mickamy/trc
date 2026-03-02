@@ -36,15 +36,11 @@ func runHTTP1Request(r *bufio.Reader, cs *connState) {
 		_, _ = io.Copy(io.Discard, req.Body)
 		_ = req.Body.Close()
 
-		select {
-		case cs.reqCh <- h1Pending{
+		cs.reqCh <- h1Pending{
 			method:  req.Method,
 			path:    req.URL.RequestURI(),
 			traceID: traceID,
 			start:   time.Now(),
-		}:
-		default:
-			// Channel full — drop to avoid blocking.
 		}
 	}
 }
