@@ -68,10 +68,16 @@ func formatRecord(r model.Record) string {
 
 	status := formatStatus(r)
 
-	dur := fmt.Sprintf("%.0fms", r.DurationMs)
+	dur := fmt.Sprintf("%dms", int(r.DurationMs))
 
-	return fmt.Sprintf("%-12s %-5s  %-12s → %-12s  %-4s %-20s  %s  %s",
-		ts, string(r.Proto), src, dst, r.Method, r.Path, status, dur,
+	methodPath := r.Method + " " + r.Path
+	if r.Proto == model.ProtoGRPC {
+		// For gRPC, Method already contains "Service/Method" — Path is redundant.
+		methodPath = r.Method
+	}
+
+	return fmt.Sprintf("%-12s %-5s  %-12s → %-12s  %-28s %4s  %s",
+		ts, string(r.Proto), src, dst, methodPath, status, dur,
 	)
 }
 
