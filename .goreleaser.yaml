@@ -1,0 +1,37 @@
+version: 2
+
+release:
+  mode: replace
+
+builds:
+  - id: trc
+    main: .
+    binary: trc
+    ldflags:
+      - -X main.version={{.Version}}
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - ids:
+      - trc
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+brews:
+  - name: trc
+    homepage: https://github.com/mickamy/trc
+    description: A local request tracer for Docker microservices.
+    install: |
+      bin.install "trc"
+    repository:
+      owner: mickamy
+      name: homebrew-tap
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+
+changelog: {}
