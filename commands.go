@@ -135,16 +135,21 @@ func handleMap(ctx context.Context, flags globalFlags, _ []string) error {
 func loadOrCapture(
 	ctx context.Context, flags globalFlags,
 ) ([]model.Record, docker.ServiceMap, error) {
-	if flags.input != "" {
-		return loadFromFile(ctx, flags)
+	e, err := configure(flags)
+	if err != nil {
+		return nil, nil, err
 	}
-	return captureForDuration(ctx, flags)
+
+	if flags.input != "" {
+		return loadFromFile(ctx, e, flags)
+	}
+	return captureForDuration(ctx, e, flags)
 }
 
 // loadFromFile reads NDJSON records from a file and optionally resolves
 // service names if --network is provided.
 func loadFromFile(
-	ctx context.Context, flags globalFlags,
+	ctx context.Context, e env, flags globalFlags,
 ) ([]model.Record, docker.ServiceMap, error) {
 	f, err := os.Open(flags.input)
 	if err != nil {
@@ -168,10 +173,6 @@ func loadFromFile(
 
 	var svcMap docker.ServiceMap
 	if flags.network != "" {
-		e, err := configure(flags)
-		if err != nil {
-			return nil, nil, err
-		}
 		svcMap, err = docker.ResolveServices(ctx, e.runner, flags.network)
 		if err != nil {
 			return nil, nil, fmt.Errorf("resolving services: %w", err)
@@ -184,13 +185,8 @@ func loadFromFile(
 // captureForDuration starts a capture, collects records for flags.duration,
 // and returns the collected records along with the service map.
 func captureForDuration(
-	ctx context.Context, flags globalFlags,
+	ctx context.Context, e env, flags globalFlags,
 ) ([]model.Record, docker.ServiceMap, error) {
-	e, err := configure(flags)
-	if err != nil {
-		return nil, nil, err
-	}
-
 	network, err := docker.DetectNetwork(ctx, e.runner, flags.network)
 	if err != nil {
 		return nil, nil, fmt.Errorf("detecting network: %w", err)
