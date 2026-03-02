@@ -243,7 +243,7 @@ func collectRecords(
 	}
 
 	if err := scanner.Err(); err != nil {
-		return records, err
+		return records, fmt.Errorf("reading records: %w", err)
 	}
 
 	return records, nil
