@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"sync"
 	"time"
@@ -55,10 +56,12 @@ func handleWatch(ctx context.Context, flags globalFlags, _ []string) error {
 	}
 
 	// Periodically refresh the service map in the background.
+	// Use a child context so the goroutine stops when StreamWatch returns.
 	var mu sync.RWMutex
+	refreshCtx, refreshCancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
 	wg.Go(func() {
-		refreshServices(ctx, e.runner, network, &mu, &svcMap)
+		refreshServices(refreshCtx, e.runner, network, &mu, &svcMap)
 	})
 
 	// Optionally tee raw NDJSON to a file for later analysis.
@@ -66,6 +69,7 @@ func handleWatch(ctx context.Context, flags globalFlags, _ []string) error {
 	if flags.output != "" {
 		f, err := os.Create(flags.output)
 		if err != nil {
+			refreshCancel()
 			return fmt.Errorf("creating output file: %w", err)
 		}
 		defer func() { _ = f.Close() }()
@@ -74,6 +78,7 @@ func handleWatch(ctx context.Context, flags globalFlags, _ []string) error {
 
 	resolve := func() docker.ServiceMap { return snapMap(&mu, &svcMap) }
 	watchErr := display.StreamWatch(ctx, r, resolve, flags.filter, os.Stdout)
+	refreshCancel()
 	wg.Wait()
 	if watchErr != nil {
 		return fmt.Errorf("streaming watch: %w", watchErr)
@@ -108,9 +113,7 @@ func snapMap(mu *sync.RWMutex, svcMap *docker.ServiceMap) docker.ServiceMap {
 	mu.RLock()
 	defer mu.RUnlock()
 	copied := make(docker.ServiceMap, len(*svcMap))
-	for k, v := range *svcMap {
-		copied[k] = v
-	}
+	maps.Copy(copied, *svcMap)
 	return copied
 }
 
