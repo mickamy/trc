@@ -72,7 +72,7 @@ func Run(ctx context.Context, cfg Config, w io.Writer) error {
 				return nil
 			}
 			tcp, _ := pkt.TransportLayer().(*layers.TCP)
-			if tcp == nil {
+			if tcp == nil || pkt.NetworkLayer() == nil || pkt.Metadata() == nil {
 				continue
 			}
 			assembler.AssembleWithTimestamp(
