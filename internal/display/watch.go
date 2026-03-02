@@ -57,14 +57,14 @@ func StreamWatch(
 		}
 
 		svcMap := resolve()
-		rec.SrcName = resolveName(svcMap, rec.SrcIP)
-		rec.DstName = resolveName(svcMap, rec.DstIP)
+		rec.SrcName = ResolveName(svcMap, rec.SrcIP)
+		rec.DstName = ResolveName(svcMap, rec.DstIP)
 
-		if filter != "" && !matchesFilter(rec, filter) {
+		if filter != "" && !MatchesFilter(rec, filter) {
 			continue
 		}
 
-		fmt.Fprintln(w, formatRecord(rec))
+		fmt.Fprintln(w, FormatRecord(rec))
 	}
 	if err := scanner.Err(); err != nil {
 		// If the context was cancelled the reader was closed, causing a
@@ -77,20 +77,20 @@ func StreamWatch(
 	return nil
 }
 
-func resolveName(svcMap docker.ServiceMap, ip string) string {
+func ResolveName(svcMap docker.ServiceMap, ip string) string {
 	if name, ok := svcMap[ip]; ok {
 		return name
 	}
 	return ip
 }
 
-func matchesFilter(rec model.Record, filter string) bool {
+func MatchesFilter(rec model.Record, filter string) bool {
 	f := strings.ToLower(filter)
 	return strings.Contains(strings.ToLower(rec.SrcName), f) ||
 		strings.Contains(strings.ToLower(rec.DstName), f)
 }
 
-func formatRecord(r model.Record) string {
+func FormatRecord(r model.Record) string {
 	ts := r.Timestamp.Format("15:04:05.000")
 
 	src := r.SrcName
@@ -98,7 +98,7 @@ func formatRecord(r model.Record) string {
 
 	status := formatStatus(r)
 
-	dur := fmt.Sprintf("%dms", int(r.DurationMs))
+	dur := formatDuration(r.DurationMs)
 
 	methodPath := r.Method + " " + r.Path
 	if r.Proto == model.ProtoGRPC {
@@ -113,6 +113,14 @@ func formatRecord(r model.Record) string {
 		line += "  " + r.TraceID
 	}
 	return line
+}
+
+func formatDuration(ms float64) string {
+	if ms >= 1 {
+		return fmt.Sprintf("%dms", int(ms))
+	}
+	us := ms * 1000 //nolint:mnd // ms to µs
+	return fmt.Sprintf("%dµs", int(us))
 }
 
 func formatStatus(r model.Record) string {

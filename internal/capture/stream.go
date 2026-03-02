@@ -64,6 +64,45 @@ func newConnState(clientIP, serverIP string) *connState {
 	}
 }
 
+// tsReaderStream wraps tcpreader.ReaderStream and records the most recent
+// packet capture timestamp from the TCP assembler's Reassembly.Seen field.
+type tsReaderStream struct {
+	tcpreader.ReaderStream
+
+	mu       sync.Mutex
+	lastSeen time.Time
+}
+
+func newTSReaderStream() *tsReaderStream {
+	return &tsReaderStream{
+		ReaderStream: tcpreader.NewReaderStream(),
+	}
+}
+
+// Reassembled intercepts the tcpassembly callback to capture packet timestamps
+// before delegating to the underlying ReaderStream.
+func (t *tsReaderStream) Reassembled(reassembly []tcpassembly.Reassembly) {
+	t.mu.Lock()
+	for _, r := range reassembly {
+		if r.Seen.After(t.lastSeen) {
+			t.lastSeen = r.Seen
+		}
+	}
+	t.mu.Unlock()
+	t.ReaderStream.Reassembled(reassembly)
+}
+
+// LastSeen returns the most recent packet capture timestamp.
+// Falls back to time.Now if no timestamp has been recorded yet.
+func (t *tsReaderStream) LastSeen() time.Time {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.lastSeen.IsZero() {
+		return time.Now()
+	}
+	return t.lastSeen
+}
+
 // connKey identifies a TCP connection direction by its 4-tuple.
 type connKey struct {
 	net, transport gopacket.Flow
@@ -99,9 +138,9 @@ func (f *streamFactory) New(
 	srcIP := net.Src().String()
 	dstIP := net.Dst().String()
 
-	rs := tcpreader.NewReaderStream()
-	go f.handleStream(key, srcIP, dstIP, &rs)
-	return &rs
+	rs := newTSReaderStream()
+	go f.handleStream(key, srcIP, dstIP, rs, rs.LastSeen)
+	return rs
 }
 
 // getOrCreateConn returns the shared connection state for a connection,
@@ -147,9 +186,10 @@ func (f *streamFactory) releaseConn(key connKey) {
 }
 
 // handleStream reads the stream and delegates to the appropriate
-// protocol parser based on the initial bytes.
+// protocol parser based on the initial bytes. The now function returns
+// the most recent packet capture timestamp for accurate duration measurement.
 func (f *streamFactory) handleStream(
-	key connKey, srcIP, dstIP string, r io.Reader,
+	key connKey, srcIP, dstIP string, r io.Reader, now func() time.Time,
 ) {
 	br := bufio.NewReaderSize(r, 4096) //nolint:mnd // read buffer size
 
@@ -182,7 +222,7 @@ func (f *streamFactory) handleStream(
 			cs.h2 = newHTTP2Parser(srcIP, dstIP, f.emit)
 			close(cs.h2Ready)
 		})
-		cs.h2.runDirection(br, dirClient)
+		cs.h2.runDirection(br, dirClient, now)
 		return
 	}
 
@@ -191,7 +231,7 @@ func (f *streamFactory) handleStream(
 		// For response streams, srcIP is the server and dstIP is the client.
 		cs := f.getOrCreateConn(key, dstIP, srcIP)
 		defer f.releaseConn(key)
-		runHTTP1Response(br, cs, cs.clientIP, cs.serverIP, f.emit)
+		runHTTP1Response(br, cs, cs.clientIP, cs.serverIP, f.emit, now)
 		return
 	}
 
@@ -199,7 +239,7 @@ func (f *streamFactory) handleStream(
 	if looksLikeHTTPMethod(s) {
 		cs := f.getOrCreateConn(key, srcIP, dstIP)
 		defer f.releaseConn(key)
-		runHTTP1Request(br, cs)
+		runHTTP1Request(br, cs, now)
 		return
 	}
 
@@ -209,7 +249,7 @@ func (f *streamFactory) handleStream(
 	defer f.releaseConn(key)
 	select {
 	case <-cs.h2Ready:
-		cs.h2.runDirection(br, dirServer)
+		cs.h2.runDirection(br, dirServer, now)
 		return
 	default:
 	}
@@ -219,7 +259,7 @@ func (f *streamFactory) handleStream(
 	defer timer.Stop()
 	select {
 	case <-cs.h2Ready:
-		cs.h2.runDirection(br, dirServer)
+		cs.h2.runDirection(br, dirServer, now)
 	case <-timer.C:
 		_, _ = io.Copy(io.Discard, br)
 	}

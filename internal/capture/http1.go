@@ -20,7 +20,8 @@ var traceHeaders = []string{
 // runHTTP1Request reads HTTP/1.1 requests from the client→server stream
 // and sends them to cs.reqCh for pairing with responses.
 // It closes cs.reqCh on return to unblock the response reader.
-func runHTTP1Request(r *bufio.Reader, cs *connState) {
+// The now function returns the packet capture timestamp for accurate timing.
+func runHTTP1Request(r *bufio.Reader, cs *connState, now func() time.Time) {
 	defer close(cs.reqCh)
 
 	for {
@@ -41,7 +42,7 @@ func runHTTP1Request(r *bufio.Reader, cs *connState) {
 			method:  req.Method,
 			path:    req.URL.RequestURI(),
 			traceID: traceID,
-			start:   time.Now(),
+			start:   now(),
 		}:
 		case <-cs.done:
 			return
@@ -51,9 +52,10 @@ func runHTTP1Request(r *bufio.Reader, cs *connState) {
 
 // runHTTP1Response reads HTTP/1.1 responses from the server→client stream,
 // pairs them with requests from cs.reqCh, and emits records.
+// The now function returns the packet capture timestamp for accurate timing.
 func runHTTP1Response(
 	r *bufio.Reader, cs *connState,
-	clientIP, serverIP string, emit func(model.Record),
+	clientIP, serverIP string, emit func(model.Record), now func() time.Time,
 ) {
 	defer close(cs.done)
 	for {
@@ -69,7 +71,7 @@ func runHTTP1Response(
 			return
 		}
 
-		duration := time.Since(pending.start)
+		duration := now().Sub(pending.start)
 		emit(model.Record{
 			Timestamp:  pending.start,
 			Proto:      model.ProtoHTTP1,

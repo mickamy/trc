@@ -18,8 +18,8 @@ func PrintTree(
 	var filtered []model.Record
 	for _, r := range records {
 		if r.TraceID == traceID {
-			r.SrcName = resolveName(svcMap, r.SrcIP)
-			r.DstName = resolveName(svcMap, r.DstIP)
+			r.SrcName = ResolveName(svcMap, r.SrcIP)
+			r.DstName = ResolveName(svcMap, r.DstIP)
 			filtered = append(filtered, r)
 		}
 	}

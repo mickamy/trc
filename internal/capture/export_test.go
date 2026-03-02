@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mickamy/trc/internal/model"
 )
@@ -38,13 +39,13 @@ func ParseHTTP1(
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		runHTTP1Request(bufio.NewReader(strings.NewReader(reqRaw)), cs)
+		runHTTP1Request(bufio.NewReader(strings.NewReader(reqRaw)), cs, time.Now)
 	}()
 	go func() {
 		defer wg.Done()
 		runHTTP1Response(
 			bufio.NewReader(strings.NewReader(respRaw)),
-			cs, clientIP, serverIP, emit,
+			cs, clientIP, serverIP, emit, time.Now,
 		)
 	}()
 	wg.Wait()
@@ -68,7 +69,7 @@ func ParseHTTP2(t *testing.T, client, server io.Reader, srcIP, dstIP string) []m
 		records = append(records, rec)
 		mu.Unlock()
 	})
-	p.runBothDirections(client, server)
+	p.runBothDirections(client, server, time.Now)
 	return records
 }
 
@@ -118,11 +119,11 @@ func HandleStreamPair(
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			p.runDirection(clientBR, dirClient)
+			p.runDirection(clientBR, dirClient, time.Now)
 		}()
 		go func() {
 			defer wg.Done()
-			p.runDirection(serverBR, dirServer)
+			p.runDirection(serverBR, dirServer, time.Now)
 		}()
 	case looksLikeHTTPMethod(s):
 		// HTTP/1.1
@@ -130,11 +131,11 @@ func HandleStreamPair(
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			runHTTP1Request(clientBR, cs)
+			runHTTP1Request(clientBR, cs, time.Now)
 		}()
 		go func() {
 			defer wg.Done()
-			runHTTP1Response(serverBR, cs, clientIP, serverIP, emit)
+			runHTTP1Response(serverBR, cs, clientIP, serverIP, emit, time.Now)
 		}()
 	default:
 		// Unknown protocol — return empty.
