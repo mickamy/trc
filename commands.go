@@ -16,6 +16,13 @@ import (
 	"github.com/mickamy/trc/internal/model"
 )
 
+// teeReadCloser combines an io.Reader with an io.Closer so that a TeeReader
+// can be closed (closing the underlying source) to unblock a blocking read.
+type teeReadCloser struct {
+	io.Reader
+	io.Closer
+}
+
 func handleWatch(ctx context.Context, flags globalFlags, _ []string) error {
 	e, err := configure(flags)
 	if err != nil {
@@ -62,7 +69,7 @@ func handleWatch(ctx context.Context, flags globalFlags, _ []string) error {
 			return fmt.Errorf("creating output file: %w", err)
 		}
 		defer func() { _ = f.Close() }()
-		r = io.TeeReader(stdout, f)
+		r = teeReadCloser{Reader: io.TeeReader(stdout, f), Closer: stdout}
 	}
 
 	resolve := func() docker.ServiceMap { return snapMap(&mu, &svcMap) }
