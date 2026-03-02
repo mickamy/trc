@@ -30,6 +30,10 @@ func run() int {
 	fs.StringVar(&flags.filter, "filter", "", "")
 	fs.DurationVar(&flags.duration, "duration", 30*time.Second, "") //nolint:mnd // default capture window
 	fs.DurationVar(&flags.duration, "d", 30*time.Second, "")        //nolint:mnd // short alias
+	fs.StringVar(&flags.output, "output", "", "")
+	fs.StringVar(&flags.output, "o", "", "")
+	fs.StringVar(&flags.input, "input", "", "")
+	fs.StringVar(&flags.input, "i", "", "")
 	fs.BoolVar(&showVersion, "version", false, "")
 	fs.BoolVar(&showVersion, "v", false, "")
 
@@ -51,19 +55,27 @@ func run() int {
 		return 0
 	}
 
+	cmd := rest[0]
+
+	// Re-parse remaining args so flags after the subcommand are recognized.
+	if err := fs.Parse(rest[1:]); err != nil {
+		return 1
+	}
+	rest = fs.Args()
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
 	var err error
-	switch rest[0] {
+	switch cmd {
 	case "watch":
-		err = handleWatch(ctx, flags, rest[1:])
+		err = handleWatch(ctx, flags, rest)
 	case "tree":
-		err = handleTree(ctx, flags, rest[1:])
+		err = handleTree(ctx, flags, rest)
 	case "map":
-		err = handleMap(ctx, flags, rest[1:])
+		err = handleMap(ctx, flags, rest)
 	default:
-		fmt.Fprintf(os.Stderr, "trc: unknown command %q\n", rest[0])
+		fmt.Fprintf(os.Stderr, "trc: unknown command %q\n", cmd)
 		printUsage()
 		return 1
 	}
@@ -89,6 +101,8 @@ Flags:
   -n, --network    Docker network to capture (auto-detected if omitted)
   --filter         Filter output by service name
   -d, --duration   Capture duration for tree/map (default 30s)
+  -o, --output     Save raw NDJSON to file during watch
+  -i, --input      Read NDJSON file for tree/map (skip capture)
   --version, -v    Print version
   -h, --help       Show this help
 `)

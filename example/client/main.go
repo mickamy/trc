@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,19 +26,21 @@ func main() {
 }
 
 func call(url string) {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(
+		context.Background(), http.MethodGet, url, nil,
+	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "client: %v\n", err)
 		return
 	}
 	req.Header.Set("X-Request-Id", fmt.Sprintf("trc-%d", time.Now().UnixNano()))
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // URL from env var
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "client: %v\n", err)
 		return
 	}
-	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
-	fmt.Fprintf(os.Stderr, "client: %s %d\n", url, resp.StatusCode)
+	defer resp.Body.Close() //nolint:errcheck // best-effort cleanup
+	_, _ = io.Copy(io.Discard, resp.Body)
+	fmt.Fprintf(os.Stderr, "client: %s %d\n", url, resp.StatusCode) //nolint:gosec // stderr logging
 }

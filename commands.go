@@ -49,7 +49,18 @@ func handleWatch(ctx context.Context, flags globalFlags, _ []string) error {
 	var mu sync.RWMutex
 	go refreshServices(ctx, e.runner, network, &mu, &svcMap)
 
-	if err := display.StreamWatch(ctx, stdout, snapMap(&mu, &svcMap), flags.filter, os.Stdout); err != nil {
+	// Optionally tee raw NDJSON to a file for later analysis.
+	var r io.Reader = stdout
+	if flags.output != "" {
+		f, err := os.Create(flags.output)
+		if err != nil {
+			return fmt.Errorf("creating output file: %w", err)
+		}
+		defer f.Close()
+		r = io.TeeReader(stdout, f)
+	}
+
+	if err := display.StreamWatch(ctx, r, snapMap(&mu, &svcMap), flags.filter, os.Stdout); err != nil {
 		return fmt.Errorf("streaming watch: %w", err)
 	}
 	return nil
@@ -90,7 +101,7 @@ func handleTree(ctx context.Context, flags globalFlags, args []string) error {
 	}
 	traceID := args[0]
 
-	records, svcMap, err := captureForDuration(ctx, flags)
+	records, svcMap, err := loadOrCapture(ctx, flags)
 	if err != nil {
 		return err
 	}
@@ -100,13 +111,63 @@ func handleTree(ctx context.Context, flags globalFlags, args []string) error {
 }
 
 func handleMap(ctx context.Context, flags globalFlags, _ []string) error {
-	records, svcMap, err := captureForDuration(ctx, flags)
+	records, svcMap, err := loadOrCapture(ctx, flags)
 	if err != nil {
 		return err
 	}
 
 	display.PrintMap(os.Stdout, records, svcMap)
 	return nil
+}
+
+// loadOrCapture reads records from a file (--input) or performs a live
+// capture for the configured duration.
+func loadOrCapture(
+	ctx context.Context, flags globalFlags,
+) ([]model.Record, docker.ServiceMap, error) {
+	if flags.input != "" {
+		return loadFromFile(ctx, flags)
+	}
+	return captureForDuration(ctx, flags)
+}
+
+// loadFromFile reads NDJSON records from a file and optionally resolves
+// service names if --network is provided.
+func loadFromFile(
+	ctx context.Context, flags globalFlags,
+) ([]model.Record, docker.ServiceMap, error) {
+	f, err := os.Open(flags.input)
+	if err != nil {
+		return nil, nil, fmt.Errorf("opening input file: %w", err)
+	}
+	defer f.Close()
+
+	var records []model.Record
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		var rec model.Record
+		if err := rec.UnmarshalNDJSON(scanner.Bytes()); err != nil {
+			continue
+		}
+		records = append(records, rec)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, nil, fmt.Errorf("reading input file: %w", err)
+	}
+
+	var svcMap docker.ServiceMap
+	if flags.network != "" {
+		e, err := configure(flags)
+		if err != nil {
+			return nil, nil, err
+		}
+		svcMap, err = docker.ResolveServices(ctx, e.runner, flags.network)
+		if err != nil {
+			return nil, nil, fmt.Errorf("resolving services: %w", err)
+		}
+	}
+
+	return records, svcMap, nil
 }
 
 // captureForDuration starts a capture, collects records for flags.duration,
