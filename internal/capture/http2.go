@@ -270,7 +270,7 @@ func (p *http2Parser) tryEmit(id uint32) {
 		Path:       s.path,
 		Status:     s.status,
 		GRPCStatus: grpcStatus,
-		DurationMs: float64(duration.Milliseconds()),
+		DurationMs: duration.Seconds() * 1000, //nolint:mnd // convert to milliseconds
 		TraceID:    s.traceID,
 	})
 }

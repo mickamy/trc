@@ -73,7 +73,7 @@ func runHTTP1Response(
 			Method:     pending.method,
 			Path:       pending.path,
 			Status:     resp.StatusCode,
-			DurationMs: float64(duration.Milliseconds()),
+			DurationMs: duration.Seconds() * 1000, //nolint:mnd // convert to milliseconds
 			TraceID:    pending.traceID,
 		})
 	}
