@@ -58,6 +58,7 @@ func renderBorderedBoxWithHelp(content, title, help string, innerWidth int) stri
 }
 
 func buildTopBorder(title string, innerWidth int) string {
+	title = truncateStr(title, innerWidth)
 	borderFg := lipgloss.NewStyle().Foreground(borderColor)
 	titleStyle := lipgloss.NewStyle().Bold(true)
 	dashes := max(innerWidth-len([]rune(title)), 0)
@@ -67,6 +68,7 @@ func buildTopBorder(title string, innerWidth int) string {
 }
 
 func buildBottomBorder(help string, innerWidth int) string {
+	help = truncateStr(help, innerWidth)
 	borderFg := lipgloss.NewStyle().Foreground(borderColor)
 	dashes := max(innerWidth-len([]rune(help)), 0)
 	return borderFg.Render("╰") +
