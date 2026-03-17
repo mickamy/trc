@@ -62,3 +62,12 @@ func (m Model) MapOutput() string { return m.mapOutput }
 func AsModel(t tea.Model) Model {
 	return t.(Model) //nolint:forcetypeassert // test helper, panic is fine
 }
+
+// Expose style helpers for tests.
+var (
+	RenderBorderedBox         = renderBorderedBox
+	RenderBorderedBoxWithHelp = renderBorderedBoxWithHelp
+	TruncateStr               = truncateStr
+	FormatDur                 = formatDur
+	FormatStat                = formatStat
+)

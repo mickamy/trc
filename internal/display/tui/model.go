@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/mickamy/trc/internal/display"
 	"github.com/mickamy/trc/internal/docker"
@@ -167,63 +168,109 @@ func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) viewWatch() string {
-	var b strings.Builder
+	innerWidth := max(m.width-4, 20) //nolint:mnd // 4 = border (2) + margin (2)
 
 	if len(m.records) == 0 {
-		b.WriteString("Waiting for traffic...\n")
-	} else {
-		// Calculate visible window.
-		contentHeight := m.height - 2 // 1 for footer, 1 for safety
-		if contentHeight < 1 {
-			contentHeight = 10 //nolint:mnd // fallback
-		}
+		return "Waiting for traffic..."
+	}
 
-		start := 0
-		end := len(m.records)
-		if end-start > contentHeight {
-			// Center the cursor in the window.
-			half := contentHeight / 2
-			start = max(m.cursor-half, 0)
-			end = start + contentHeight
-			if end > len(m.records) {
-				end = len(m.records)
-				start = end - contentHeight
-			}
-		}
+	title := fmt.Sprintf(" trc (%d records) ", len(m.records))
+	colRequest := max(innerWidth-colFixedWatch, 10) //nolint:mnd // minimum column width
 
-		for i := start; i < end; i++ {
-			if i == m.cursor {
-				b.WriteString("\x1b[1m▶ ")
-				b.WriteString(display.FormatRecord(m.records[i]))
-				b.WriteString("\x1b[0m\n")
-			} else {
-				b.WriteString("  ")
-				b.WriteString(display.FormatRecord(m.records[i]))
-				b.WriteByte('\n')
-			}
+	// Overhead: border top (1) + header (1) + border bottom (1) + footer (1).
+	dataRows := max(m.height-4, 1) //nolint:mnd // 4 lines of overhead
+
+	start := 0
+	end := len(m.records)
+	if end-start > dataRows {
+		half := dataRows / 2
+		start = max(m.cursor-half, 0)
+		end = start + dataRows
+		if end > len(m.records) {
+			end = len(m.records)
+			start = end - dataRows
 		}
 	}
 
-	// Footer
-	b.WriteByte('\n')
+	header := fmt.Sprintf("  %-*s %-*s %-*s → %-*s %-*s %*s %*s",
+		colTime, "Time",
+		colProto, "Proto",
+		colSrc, "Src",
+		colDst, "Dst",
+		colRequest, "Request",
+		colStatus, "Stat",
+		colDuration, "Duration",
+	)
+
+	var rows []string
+	rows = append(rows, lipgloss.NewStyle().Bold(true).Render(header))
+	for i := start; i < end; i++ {
+		rows = append(rows, m.renderWatchRow(m.records[i], i == m.cursor, colRequest))
+	}
+
+	content := strings.Join(rows, "\n")
+
+	var footer string
 	switch {
 	case m.statusMsg != "":
-		b.WriteString(m.statusMsg)
+		footer = "  " + m.statusMsg
 	case m.eof:
-		b.WriteString(" ↑/↓: move  Enter: tree  m: map  e: export  q: quit  (EOF)")
+		footer = "  ↑/↓: move  Enter: tree  m: map  e: export  q: quit  (EOF)"
 	default:
-		b.WriteString(" ↑/↓: move  Enter: tree  m: map  e: export  q: quit")
+		footer = "  ↑/↓: move  Enter: tree  m: map  e: export  q: quit"
 	}
 
-	return b.String()
+	return renderBorderedBox(content, title, innerWidth) + "\n" + footer
+}
+
+func (m Model) renderWatchRow(r model.Record, isCursor bool, colRequest int) string {
+	marker := "  "
+	if isCursor {
+		marker = "▶ "
+	}
+
+	ts := r.Timestamp.Format("15:04:05.000")
+
+	methodPath := r.Method + " " + r.Path
+	if r.Proto == model.ProtoGRPC {
+		methodPath = r.Method
+	}
+	methodPath = truncateStr(methodPath, colRequest)
+
+	status := formatStat(string(r.Proto), r.Status, r.GRPCStatus)
+	dur := formatDur(r.DurationMs)
+
+	row := fmt.Sprintf("%s%-*s %-*s %-*s → %-*s %-*s %*s %*s",
+		marker,
+		colTime, ts,
+		colProto, string(r.Proto),
+		colSrc, r.SrcName,
+		colDst, r.DstName,
+		colRequest, methodPath,
+		colStatus, status,
+		colDuration, dur,
+	)
+
+	if isCursor {
+		return lipgloss.NewStyle().Bold(true).Render(row)
+	}
+	return row
 }
 
 func (m Model) viewTree() string {
-	return m.treeOutput + "\n Esc: back  q: quit"
+	innerWidth := max(m.width-4, 20) //nolint:mnd // 4 = border + margin
+	content := strings.TrimRight(m.treeOutput, "\n ")
+	return renderBorderedBoxWithHelp(
+		content, " Trace ", " Esc: back  q: quit ", innerWidth,
+	)
 }
 
 func (m Model) viewMap() string {
-	return m.mapOutput + "\n Esc: back  q: quit"
+	innerWidth := max(m.width-4, 20) //nolint:mnd // 4 = border + margin
+	content := strings.TrimRight(m.mapOutput, "\n ")
+	return renderBorderedBoxWithHelp(
+		content, " Service Dependencies ", " Esc: back  q: quit ", innerWidth,
+	)
 }
 
 // exportRecords writes all records as NDJSON to the named file.
