@@ -87,6 +87,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // View renders the current view.
 func (m Model) View() string {
+	if m.width == 0 {
+		return ""
+	}
+
 	switch m.currentView {
 	case viewWatch:
 		return m.viewWatch()
@@ -230,6 +234,9 @@ func (m Model) renderWatchRow(r model.Record, isCursor bool, colRequest int) str
 	}
 
 	ts := r.Timestamp.Format("15:04:05.000")
+	proto := truncateStr(string(r.Proto), colProto)
+	src := truncateStr(r.SrcName, colSrc)
+	dst := truncateStr(r.DstName, colDst)
 
 	methodPath := r.Method + " " + r.Path
 	if r.Proto == model.ProtoGRPC {
@@ -237,15 +244,15 @@ func (m Model) renderWatchRow(r model.Record, isCursor bool, colRequest int) str
 	}
 	methodPath = truncateStr(methodPath, colRequest)
 
-	status := formatStat(string(r.Proto), r.Status, r.GRPCStatus)
-	dur := formatDur(r.DurationMs)
+	status := truncateStr(formatStat(string(r.Proto), r.Status, r.GRPCStatus), colStatus)
+	dur := truncateStr(formatDur(r.DurationMs), colDuration)
 
 	row := fmt.Sprintf("%s%-*s %-*s %-*s → %-*s %-*s %*s %*s",
 		marker,
 		colTime, ts,
-		colProto, string(r.Proto),
-		colSrc, r.SrcName,
-		colDst, r.DstName,
+		colProto, proto,
+		colSrc, src,
+		colDst, dst,
 		colRequest, methodPath,
 		colStatus, status,
 		colDuration, dur,
