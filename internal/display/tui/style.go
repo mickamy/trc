@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -62,7 +63,7 @@ func buildTopBorder(title string, innerWidth int) string {
 	dashes := max(innerWidth-len([]rune(title)), 0)
 	return borderFg.Render("╭") +
 		titleStyle.Render(title) +
-		borderFg.Render(strings.Repeat("─", dashes) + "╮")
+		borderFg.Render(strings.Repeat("─", dashes)+"╮")
 }
 
 func buildBottomBorder(help string, innerWidth int) string {
@@ -70,7 +71,7 @@ func buildBottomBorder(help string, innerWidth int) string {
 	dashes := max(innerWidth-len([]rune(help)), 0)
 	return borderFg.Render("╰") +
 		lipgloss.NewStyle().Faint(true).Render(help) +
-		borderFg.Render(strings.Repeat("─", dashes) + "╯")
+		borderFg.Render(strings.Repeat("─", dashes)+"╯")
 }
 
 // truncateStr truncates s to maxLen runes, appending "…" if truncated.
@@ -99,5 +100,5 @@ func formatStat(proto string, status int, grpcStatus string) string {
 	if proto == "grpc" && grpcStatus != "" {
 		return grpcStatus
 	}
-	return fmt.Sprintf("%d", status)
+	return strconv.Itoa(status)
 }
