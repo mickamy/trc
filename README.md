@@ -4,7 +4,7 @@
 
 **Real-time HTTP/gRPC traffic tracer for Docker microservices**
 
-![demo](docs/demo.gif)
+![demo](./docs/demo.gif)
 
 ## Features
 
